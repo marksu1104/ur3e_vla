@@ -3,6 +3,9 @@ __pycache__/
 
 outputs/
 raw/
+data/raw/
+data/runs/
+models/
 
 .env
 .venv/

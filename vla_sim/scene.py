@@ -1,19 +1,4 @@
-"""
-envs.sim_setup — Phase 1 spawn + SceneCfg + scene helpers.
-
-⚠️  必須在 boot_app() 之後才能 import 這個 module
-   (因為它要 import isaaclab.* / omni.*).
-
-Provides:
-  enable_extensions()             — 啟用 isaacsim.robot_setup.assembler
-  find_gripper_mount_abs(stage)   — 找夾爪 base_link prim
-  spawn_raw_and_assemble()        — Phase 1: 載入 UR3e/gripper USD + RobotAssembler
-  make_target_cfg(name, info)     — cuboid 物理 proxy + YCB visual mesh 用
-  SceneCfg                         — InteractiveScene 用的 cfg dataclass
-  hide_proxy_meshes(stage, keys)  — 把 cuboid 變透明, 只留 YCB visual
-
-DEBUG print 全部保留在原位置 (跑出問題時超重要).
-"""
+"""Isaac Lab scene configuration and asset assembly helpers."""
 
 import omni.usd
 import omni.kit.app
@@ -29,8 +14,8 @@ from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR
 from isaaclab.sensors import FrameTransformerCfg
 from isaaclab.sensors.frame_transformer import OffsetCfg
 
-from envs.boot import log
-from envs.config import (
+from vla_sim.isaac_app import log
+from vla_sim.config import (
     # USD paths
     UR3E_USD_RELATIVE,
     GRIPPER_USD_RELATIVE,
@@ -59,13 +44,9 @@ from pathlib import Path
 ASSET_DIR = Path(__file__).resolve().parent.parent / "assets"
 
 # Resolved asset URLs (after carb settings hack in boot.py)
-UR3E_USD_PATH    = f"{ISAAC_NUCLEUS_DIR}/{UR3E_USD_RELATIVE}"
+UR3E_USD_PATH = f"{ISAAC_NUCLEUS_DIR}/{UR3E_USD_RELATIVE}"
 GRIPPER_USD_PATH = f"{ISAAC_NUCLEUS_DIR}/{GRIPPER_USD_RELATIVE}"
 
-
-# ════════════════════════════════════════════════════════════════════
-# Phase 1 — spawn + Robot Assembler
-# ════════════════════════════════════════════════════════════════════
 
 def enable_extensions():
     mgr = omni.kit.app.get_app().get_extension_manager()
@@ -74,17 +55,15 @@ def enable_extensions():
 
 
 def find_gripper_mount_abs(stage):
-    """找夾爪 base_link prim 的絕對路徑 (assembly mount point)."""
+    """Find the gripper base-link prim used as the assembly mount."""
     from pxr import Usd
 
-    # 先試明確路徑候選
     for rel in GRIPPER_MOUNT_REL_CANDIDATES:
         abs_path = f"{GRIPPER_PRIM_PATH}/{rel}"
         if stage.GetPrimAtPath(abs_path).IsValid():
             log(f"Found gripper mount at: {abs_path}")
             return abs_path
 
-    # Fallback: 用 Usd.PrimRange 遍歷 (Prim.GetAllDescendants 在新版 USD 改名了)
     gripper_prim = stage.GetPrimAtPath(GRIPPER_PRIM_PATH)
     for p in Usd.PrimRange(gripper_prim):
         if "base_link" in p.GetName().lower():
@@ -95,10 +74,7 @@ def find_gripper_mount_abs(stage):
 
 
 def spawn_raw_and_assemble():
-    """載入 UR3e 跟 Robotiq USD, 用 RobotAssembler 組合成單一 articulation.
-
-    DEBUG 訊息 (USD path 檢查 / Stage tree dump / mount lookup) 全部保留.
-    """
+    """Load UR3e and Robotiq USD assets, then assemble them into one robot."""
     from isaacsim.core.utils.stage import add_reference_to_stage
     from isaacsim.robot_setup.assembler import RobotAssembler
     from pxr import UsdGeom
@@ -107,7 +83,6 @@ def spawn_raw_and_assemble():
     if not stage.GetPrimAtPath("/World").IsValid():
         UsdGeom.Xform.Define(stage, "/World")
 
-    # ── DEBUG: 確認 USD 路徑能解析 ─────────────────────────────────────
     import omni.client as _client
     log(f"DEBUG: ISAAC_NUCLEUS_DIR = {ISAAC_NUCLEUS_DIR}")
     log(f"DEBUG: UR3E_USD_PATH    = {UR3E_USD_PATH}")
@@ -117,17 +92,14 @@ def spawn_raw_and_assemble():
     _r, _ = _client.stat(GRIPPER_USD_PATH)
     log(f"DEBUG: Gripper stat result = {_r}")
 
-    # ── 載入 UR3e ─────────────────────────────────────────────────────
     log(f"Loading UR3e at {ROBOT_PRIM_PATH}...")
     add_reference_to_stage(usd_path=UR3E_USD_PATH, prim_path=ROBOT_PRIM_PATH)
     log("UR3e add_reference_to_stage returned OK")
 
-    # ── 載入 Gripper ──────────────────────────────────────────────────
     log(f"Loading gripper at {GRIPPER_PRIM_PATH}...")
     add_reference_to_stage(usd_path=GRIPPER_USD_PATH, prim_path=GRIPPER_PRIM_PATH)
     log("Gripper add_reference_to_stage returned OK")
 
-    # ── 等 USD reference 完成載入 ─────────────────────────────────────
     kit = omni.kit.app.get_app()
     log("Calling kit.update() x120...")
     for i in range(120):
@@ -136,7 +108,6 @@ def spawn_raw_and_assemble():
             log(f"  kit update {i}/120")
     log("kit.update() x120 done")
 
-    # ── DEBUG: dump 載入後的 stage tree ───────────────────────────────
     log("Looking up mount frames...")
     try:
         log("=== Stage prims under /World ===")
@@ -157,7 +128,6 @@ def spawn_raw_and_assemble():
         import traceback
         log(traceback.format_exc())
 
-    # ── 找 mount points ───────────────────────────────────────────────
     log(f"=== Looking for {UR3E_MOUNT_ABS} ===")
     try:
         ur_mount = stage.GetPrimAtPath(UR3E_MOUNT_ABS)
@@ -178,7 +148,6 @@ def spawn_raw_and_assemble():
     if not ur_mount.IsValid() or not gr_mount.IsValid():
         raise RuntimeError("Mount prims not valid.")
 
-    # ── 執行 assembly ─────────────────────────────────────────────────
     assembler = RobotAssembler()
     assembler.begin_assembly(
         stage,
@@ -189,22 +158,12 @@ def spawn_raw_and_assemble():
     assembler.assemble()
     assembler.finish_assemble()
 
-    # 等 assembly 落地
     for _ in range(60):
         kit.update()
 
 
-# ════════════════════════════════════════════════════════════════════
-# Scene config
-# ════════════════════════════════════════════════════════════════════
-
 def make_target_cfg(name: str, info: dict) -> RigidObjectCfg:
-    """建立隱形 cuboid 物理 proxy (之後 attach YCB visual mesh).
-
-    Note: visual_material 拿掉, 因為 IsaacLab 3.0 + Sim 6.0 的
-    spawn_preview_surface() 會踩到 CreateShaderPrimFromSdrCommand bug.
-    Cuboid 之後會被 hide_proxy_meshes() 設成 invisible, 反正看不到.
-    """
+    """Create the physical cuboid proxy for a YCB target object."""
     rigid_props = sim_utils.RigidBodyPropertiesCfg(
         rigid_body_enabled=True,
         solver_position_iteration_count=16,
@@ -237,19 +196,14 @@ def make_target_cfg(name: str, info: dict) -> RigidObjectCfg:
 @configclass
 class SceneCfg(InteractiveSceneCfg):
     ground = AssetBaseCfg(prim_path="/World/ground", spawn=sim_utils.GroundPlaneCfg())
-    # 🌟 攝影棚光線 (模擬 Gray Studio 效果)
     light = AssetBaseCfg(
         prim_path="/World/light",
-        spawn=sim_utils.DomeLightCfg(
-            intensity=1500.0, # 亮度可依畫面需求微調 (通常在 1000~3000 之間)
-            # 這是 Nucleus 內建的標準室內攝影棚 HDRI 貼圖，能完美模擬 Gray Studio 的柔和光影
-            texture_file=f"{ISAAC_NUCLEUS_DIR}/Materials/Textures/Skies/Indoor/Zeto_CG_light_probe_02_half.hdr",
-        )
+        spawn=sim_utils.DomeLightCfg(intensity=1500.0, color=(1.0, 1.0, 1.0)),
     )
 
     robot = ArticulationCfg(
         prim_path=ROBOT_PRIM_PATH,
-        spawn=None,  # 已在 Phase 1 用 RobotAssembler 載入
+        spawn=None,
         init_state=ArticulationCfg.InitialStateCfg(
             pos=ROBOT_BASE_POS, rot=ROBOT_BASE_ROT,
         ),
@@ -284,28 +238,20 @@ class SceneCfg(InteractiveSceneCfg):
             rot=(0.0, 0.0, 0.0, 1.0)
             ),
     )
-    
-    # 🌟 新增的桌墊 (厚度 0.01)
     mat = AssetBaseCfg(
         prim_path="/World/Mat",
         spawn=sim_utils.CuboidCfg(
             size=(1.2, 0.6, 0.01),
-            # 設定為 Kinematic 實體，且開啟碰撞，這樣東西放上去才不會掉下去
             rigid_props=sim_utils.RigidBodyPropertiesCfg(kinematic_enabled=True),
             collision_props=sim_utils.CollisionPropertiesCfg(),
         ),
         init_state=AssetBaseCfg.InitialStateCfg(
-            # X 與 Y 完全對齊桌子 (1.17, 0.17)
-            # Z 軸高度 = 1.05 (桌面) + 0.005 (桌墊一半的厚度) = 1.055
             pos=(0.46, 0.17, 1.05),
             rot=(0.0, 0.0, 0.0, 1.0)
         ),
     )
-    
-    
-
     banana = make_target_cfg("banana", TARGETS["banana"])
-    mug    = make_target_cfg("mug",    TARGETS["mug"])
+    mug = make_target_cfg("mug", TARGETS["mug"])
 
     camera_main = CameraCfg(
         prim_path="/World/CameraMain",
@@ -333,7 +279,6 @@ class SceneCfg(InteractiveSceneCfg):
         ),
     )
 
-    # 軌跡跑完後動態 reposition, 初始位置任意
     camera_orbit = CameraCfg(
         prim_path="/World/CameraOrbit",
         update_period=0.0,
@@ -346,10 +291,6 @@ class SceneCfg(InteractiveSceneCfg):
             convention="opengl",
         ),
     )
-    
-    # ── End-effector frame transformer ──────────────────────────────
-    # 從 base_link 看 TCP (從 wrist_3_link 沿 Z 軸 18cm 到夾爪兩指中心).
-    # DataCollector 從 scene["ee_frame"] 抓 TCP pose.
     ee_frame = FrameTransformerCfg(
         prim_path=f"{ROBOT_PRIM_PATH}/base_link",
         target_frames=[
@@ -357,7 +298,7 @@ class SceneCfg(InteractiveSceneCfg):
                 prim_path=f"{ROBOT_PRIM_PATH}/wrist_3_link",
                 name="end_effector",
                 offset=OffsetCfg(
-                    pos=(0.0, 0.0, 0.18),  # ★ TCP offset, 之後實測再微調
+                    pos=(0.0, 0.0, 0.18),
                     rot=(1.0, 0.0, 0.0, 0.0),
                 ),
             ),
@@ -365,12 +306,8 @@ class SceneCfg(InteractiveSceneCfg):
     )
 
 
-# ════════════════════════════════════════════════════════════════════
-# Scene helpers
-# ════════════════════════════════════════════════════════════════════
-
 def hide_proxy_meshes(stage, target_keys):
-    """把每個 cuboid proxy 中的 mesh 設成 invisible, 只留 YCB visual."""
+    """Hide cuboid proxy meshes after visual YCB meshes are attached."""
     from pxr import UsdGeom
 
     for target_key in target_keys:
