@@ -96,3 +96,106 @@ a `success=True` attribute for bookkeeping.
 
 Add `--show-gui` when you want to inspect the simulation visually while
 collecting a small debug run.
+
+## Build RLDS From HDF5
+
+The local TFDS builder in `rlds_builder/ur3e_vla_dataset` reads the HDF5 file directly. It does not require an intermediate `episode_*.npy` export.
+
+```bash
+conda activate rlds_env
+cd ~/IsaacLab/ur3e_vla/rlds_builder/ur3e_vla_dataset
+
+export UR3E_VLA_H5_PATH=~/IsaacLab/ur3e_vla/outputs/data/mug/demos.h5
+export UR3E_VLA_VAL_RATIO=0.1
+export UR3E_VLA_SPLIT_SEED=42
+
+tfds build --overwrite
+```
+
+The builder emits RLDS steps with:
+
+```text
+observation/image
+observation/hand_image
+observation/state
+action
+language_instruction
+language_embedding
+is_first
+is_last
+is_terminal
+reward
+discount
+```
+
+The generated TFDS dataset is written to:
+
+```text
+~/tensorflow_datasets/ur3e_vla_dataset/1.0.0
+```
+
+## Prepare OpenVLA Fine-Tuning Data
+
+Copy the generated TFDS dataset into the OpenVLA workspace:
+
+```bash
+cp -r ~/tensorflow_datasets/ur3e_vla_dataset ~/vla_ws/openvla/openvla/datasets/
+```
+
+OpenVLA must also register `ur3e_vla_dataset` in its RLDS dataset config,
+standardization transform registry, and mixture registry:
+
+```text
+~/vla_ws/openvla/openvla/prismatic/vla/datasets/rlds/oxe/configs.py
+~/vla_ws/openvla/openvla/prismatic/vla/datasets/rlds/oxe/transforms.py
+~/vla_ws/openvla/openvla/prismatic/vla/datasets/rlds/oxe/mixtures.py
+```
+
+After registration, the dataset can be used with:
+
+```text
+--data_root_dir datasets
+--dataset_name ur3e_vla_dataset
+```
+
+## Fine-Tune OpenVLA
+
+Run this in the OpenVLA environment:
+
+```bash
+conda activate openvla
+cd ~/vla_ws/openvla/openvla
+
+WANDB_MODE=disabled torchrun --standalone --nproc_per_node=1 vla-scripts/finetune.py \
+    --vla_path "openvla/openvla-7b" \
+    --data_root_dir datasets \
+    --dataset_name ur3e_vla_dataset \
+    --run_root_dir ./runs/ur3e_vla_mug_200steps \
+    --adapter_tmp_dir ./checkpoints/ur3e_vla_mug_200steps \
+    --final_model_dir ./exports/ur3e_vla_mug_latest \
+    --batch_size 1 \
+    --max_steps 200 \
+    --save_steps 100
+```
+
+Use a small `--max_steps` value first as a smoke test. Increase it only after
+the dataset loader and training loop run correctly.
+
+By default, OpenVLA saves the fused fine-tuned model under `runs/` with its
+full experiment name. Passing `--final_model_dir` also writes the fused model to
+a short, stable inference path:
+
+```text
+~/vla_ws/openvla/openvla/exports/ur3e_vla_mug_latest
+```
+
+Then point `scripts/vla_server.py` to that path:
+
+```bash
+python scripts/vla_server.py \
+    --model-path ~/vla_ws/openvla/openvla/exports/ur3e_vla_mug_latest \
+    --port 8000
+```
+
+If `--final_model_dir` is omitted, the original OpenVLA output path under
+`runs/` is used.
