@@ -50,11 +50,14 @@ source ~/ros2_jazzy_ws/install/setup.bash
 conda activate env_isaaclab_ros2
 cd ~/IsaacLab
 ./isaaclab.sh -p ./ur3e_vla/scripts/run_vla.py \
-    --target mug \
+    --target red_mug \
     --instruction "pick up the red mug" \
     --vla-server http://localhost:8000 \
-    --action-scale 0.1 \
-    --max-steps 600
+    --camera camera_main \
+    --unnorm-key ur3e_vla_dataset \
+    --action-scale 0.5 \
+    --lock-orientation \
+    --max-steps 6000
 ```
 
 ## Collect Demonstrations
@@ -66,7 +69,7 @@ source ~/ros2_jazzy_ws/install/setup.bash
 conda activate env_isaaclab_ros2
 cd ~/IsaacLab
 ./isaaclab.sh -p ./ur3e_vla/scripts/collect_demos.py \
-    --target mug \
+    --target red_mug \
     --episodes 5 \
     --output-dir outputs/data \
     --seed 42 \
@@ -77,7 +80,7 @@ The default output path is target-based. Successful episodes are appended to a
 single HDF5 file, for example:
 
 ```text
-outputs/data/mug/demos.h5
+outputs/data/red_mug/demos.h5
 outputs/data/banana/demos.h5
 ```
 
@@ -105,7 +108,7 @@ The local TFDS builder in `rlds_builder/ur3e_vla_dataset` reads the HDF5 file di
 conda activate rlds_env
 cd ~/IsaacLab/ur3e_vla/rlds_builder/ur3e_vla_dataset
 
-export UR3E_VLA_H5_PATH=~/IsaacLab/ur3e_vla/outputs/data/mug/demos.h5
+export UR3E_VLA_H5_PATH=~/IsaacLab/ur3e_vla/outputs/data/red_mug/demos.h5
 export UR3E_VLA_VAL_RATIO=0.1
 export UR3E_VLA_SPLIT_SEED=42
 
@@ -170,30 +173,33 @@ WANDB_MODE=disabled torchrun --standalone --nproc_per_node=1 vla-scripts/finetun
     --vla_path "openvla/openvla-7b" \
     --data_root_dir datasets \
     --dataset_name ur3e_vla_dataset \
-    --run_root_dir ./runs/ur3e_vla_mug_200steps \
-    --adapter_tmp_dir ./checkpoints/ur3e_vla_mug_200steps \
-    --final_model_dir ./exports/ur3e_vla_mug_latest \
+    --run_root_dir ./runs \
+    --adapter_tmp_dir ./checkpoints \
+    --final_model_dir ./exports/ur3e_vla_red_mug_latest \
     --batch_size 1 \
-    --max_steps 200 \
-    --save_steps 100
+    --max_steps 1000 \
+    --save_steps 250 \
+    --learning_rate 1e-4 \
+    --shuffle_buffer_size 1000 \
+    --image_aug False
 ```
-
-Use a small `--max_steps` value first as a smoke test. Increase it only after
-the dataset loader and training loop run correctly.
 
 By default, OpenVLA saves the fused fine-tuned model under `runs/` with its
 full experiment name. Passing `--final_model_dir` also writes the fused model to
 a short, stable inference path:
 
 ```text
-~/vla_ws/openvla/openvla/exports/ur3e_vla_mug_latest
+~/vla_ws/openvla/openvla/exports/ur3e_vla_red_mug_latest
 ```
 
 Then point `scripts/vla_server.py` to that path:
 
 ```bash
+conda activate openvla
+cd ~/IsaacLab/ur3e_vla
 python scripts/vla_server.py \
-    --model-path ~/vla_ws/openvla/openvla/exports/ur3e_vla_mug_latest \
+    --model-path ~/vla_ws/openvla/openvla/exports/ur3e_vla_red_mug_latest \
+    --unnorm-key ur3e_vla_dataset \
     --port 8000
 ```
 

@@ -3,8 +3,10 @@
 import argparse
 import base64
 import io
+import json
 from pathlib import Path
 import time
+import traceback
 from contextlib import asynccontextmanager
 from typing import Optional
 
@@ -34,7 +36,7 @@ def parse_args():
                    help="Load the model with 4-bit quantization.")
     p.add_argument("--load-in-8bit", action="store_true",
                    help="Load the model with 8-bit quantization.")
-    p.add_argument("--unnorm-key", type=str, default="bridge_orig",
+    p.add_argument("--unnorm-key", type=str, default="ur3e_vla_dataset",
                    help="Action unnormalization key.")
     return p.parse_args()
 
@@ -64,6 +66,23 @@ def resolve_model_path(model_path: str) -> str:
             )
         return str(path)
     return model_path
+
+
+def load_local_dataset_statistics(model_path: str) -> Optional[dict]:
+    """Load fine-tuning dataset statistics saved next to a local model export."""
+    path = Path(model_path).expanduser()
+    if not path.exists() or not path.is_dir():
+        return None
+
+    stats_path = path / "dataset_statistics.json"
+    if not stats_path.exists():
+        return None
+
+    with stats_path.open("r") as f:
+        stats = json.load(f)
+    print(f"[VLA Server] Loaded dataset statistics: {stats_path}")
+    print(f"[VLA Server] Available unnorm keys: {list(stats.keys())}")
+    return stats
 
 
 def load_model():
@@ -100,6 +119,19 @@ def load_model():
         **load_kwargs,
     )
 
+    local_stats = load_local_dataset_statistics(model_path)
+    if local_stats is not None:
+        MODEL.norm_stats = local_stats
+        if hasattr(MODEL, "config"):
+            MODEL.config.norm_stats = local_stats
+
+    if ARGS.unnorm_key not in getattr(MODEL, "norm_stats", {}):
+        available = list(getattr(MODEL, "norm_stats", {}).keys())
+        raise RuntimeError(
+            f"Unnorm key '{ARGS.unnorm_key}' is not available. "
+            f"Available keys: {available}"
+        )
+
     if not ARGS.load_in_4bit and not ARGS.load_in_8bit:
         MODEL = MODEL.to(DEVICE)
 
@@ -133,10 +165,15 @@ def _move_inputs_to_device(inputs):
     return new_inputs
 
 
+def build_prompt(instruction: str) -> str:
+    """Return the prompt format used by OpenVLA fine-tuning."""
+    return f"In: What action should the robot take to {instruction.lower()}?\nOut:"
+
+
 def _warmup():
     dummy_img = Image.fromarray(np.zeros((256, 256, 3), dtype=np.uint8))
     inputs = PROCESSOR(
-        text="pick up the object",
+        text=build_prompt("pick up the object"),
         images=dummy_img,
         return_tensors="pt",
     )
@@ -218,7 +255,7 @@ def predict(req: PredictRequest):
 
     unnorm_key = req.unnorm_key or ARGS.unnorm_key
     inputs = PROCESSOR(
-        text=req.instruction,
+        text=build_prompt(req.instruction),
         images=img,
         return_tensors="pt",
     )
@@ -232,6 +269,14 @@ def predict(req: PredictRequest):
                 do_sample=False,
             )
         except Exception as e:
+            print("[VLA Server] Inference failed:")
+            print(traceback.format_exc())
+            try:
+                norm_stats = getattr(MODEL, "norm_stats", {})
+                print(f"[VLA Server] Requested unnorm_key: {unnorm_key}")
+                print(f"[VLA Server] Available unnorm_keys: {list(norm_stats.keys())}")
+            except Exception:
+                pass
             raise HTTPException(status_code=500, detail=f"Inference failed: {e}")
 
     if hasattr(action, "cpu"):

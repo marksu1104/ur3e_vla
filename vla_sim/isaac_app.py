@@ -29,7 +29,7 @@ if "--enable_cameras" not in sys.argv:
 
 
 def parse_cli_args():
-    parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser(allow_abbrev=False)
     AppLauncher.add_app_launcher_args(parser)
     parser.add_argument("--record-seconds", type=int, default=DEFAULT_RECORD_SECONDS)
     parser.add_argument("--camera-fps",     type=int, default=DEFAULT_CAMERA_FPS)

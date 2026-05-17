@@ -38,16 +38,37 @@ VARIANT_NAME = "ur3e_with_2f140"
 
 # Robot pose and kinematics.
 ROBOT_BASE_POS = (0.0, 0.0, 1.05)
-ROBOT_BASE_ROT = (1.0, 0.0, 0.0, 0.0)
+ROBOT_BASE_ROT = (0.9239, 0.0, 0.0, -0.3827)
+
+# Workspace furniture.
+TABLE_USD_RELATIVE = "Props/Mounts/ThorlabsTable/table_instanceable.usd"
+TABLE_SCALE = (1.8, 0.8, 1.0)
+TABLE_A_POS = (1.17, 0.17, 1.05)
+TABLE_B_POS = (1.17, 0.775, 1.05)
+TABLE_ROT = (0.0, 0.0, 0.0, 1.0)
+
+TABLE_MAT_SIZE = (1.2, 0.6, 0.01)
+TABLE_MAT_A_POS = (0.46, 0.17, 1.055)
+TABLE_MAT_B_POS = (0.46, 0.775, 1.055)
+TABLE_MAT_COLOR = (0.08, 0.08, 0.08)
+
+BACKDROP_HEIGHT = 1.90
+BACKDROP_THICKNESS = 0.04
+BACKDROP_Z = 0.95
+BACKDROP_COLOR = (0.005, 0.005, 0.005)
+BACKDROP_BACK_SIZE = (BACKDROP_THICKNESS, 1.90, BACKDROP_HEIGHT)
+BACKDROP_BACK_POS = (-0.23, 0.61, BACKDROP_Z)
+BACKDROP_SIDE_SIZE = (2.18, BACKDROP_THICKNESS, BACKDROP_HEIGHT)
+BACKDROP_SIDE_POS = (0.76, -0.23, BACKDROP_Z)
 
 EE_BODY_NAME = "wrist_3_link"
 EE_ORIENT_DOWN = (0.0, 1.0, 0.0, 0.0)
 
 GRIPPER_OPEN = 0.0
-GRIPPER_CLOSE = 0.38
+GRIPPER_CLOSE = 0.26
 
 HOME_POS = (0.30, 0.13, 1.35)
-HOME_Q = [0.00, -1.57, 1.57, -1.57, -1.57, 0.00]
+HOME_Q = [0.57, -1.57, 1.57, -1.57, -1.57, 0.00]
 
 
 # End-effector workspace clamp (x, y, z).
@@ -61,15 +82,15 @@ ORBIT_CENTER = (0.30, 0.15, 1.15)
 ORBIT_RADIUS = 1.0
 ORBIT_HEIGHT = 1.55
 
-CAMERA_MAIN_POS = (1, 0.0, 1.8)
-CAMERA_MAIN_ROT = (0.71, 0.32, 0.27, 0.77)
-CAMERA_MAIN_FOCAL = 12.0
+CAMERA_MAIN_POS = (0.6, 0.6, 1.5)
+CAMERA_MAIN_ROT = (0.28, 0.13, 0.43, 0.85)
+CAMERA_MAIN_FOCAL = 11.0
 
 # YCB target objects.
 TARGETS = {
     "banana": {
         "usd_relative": f"{YCB_NUCLEUS_PATH}/011_banana.usd",
-        "spawn_pos": (0.4, 0.2, 1.15),
+        "spawn_pos": (0.5, 0.0, 1.15),
         "spawn_rot": (1.0, 0.0, 0.0, 0.0),
         "mass": 0.15,
         "grasp_z": 0.180,
@@ -77,15 +98,27 @@ TARGETS = {
         "y_nudge": 0.000,
         "size": (0.20, 0.06, 0.07),
     },
-    "mug": {
+    "red_mug": {
         "usd_relative": f"{YCB_NUCLEUS_PATH}/025_mug.usd",
-        "spawn_pos": (0.2, 0.30, 1.20),
+        "spawn_pos": (0.15, 0.30, 1.20),
         "spawn_rot": (0.7071, -0.7071, 0.0, 0.0),
         "mass": 0.20,
         "grasp_z": 0.200,
         "hover_z": 0.330,
         "y_nudge": 0.000,
         "size": (0.08, 0.08, 0.08),
+        "color": (0.85, 0.05, 0.04),
+    },
+    "blue_mug": {
+        "usd_relative": f"{YCB_NUCLEUS_PATH}/025_mug.usd",
+        "spawn_pos": (0.4, 0.25, 1.20),
+        "spawn_rot": (0.7071, -0.7071, 0.0, 0.0),
+        "mass": 0.20,
+        "grasp_z": 0.200,
+        "hover_z": 0.330,
+        "y_nudge": 0.000,
+        "size": (0.08, 0.08, 0.08),
+        "color": (0.02, 0.18, 0.85),
     },
 }
 

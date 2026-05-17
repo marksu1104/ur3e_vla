@@ -29,6 +29,21 @@ from vla_sim.config import (
     # Robot
     ROBOT_BASE_POS,
     ROBOT_BASE_ROT,
+    # Furniture
+    TABLE_USD_RELATIVE,
+    TABLE_SCALE,
+    TABLE_A_POS,
+    TABLE_B_POS,
+    TABLE_ROT,
+    TABLE_MAT_SIZE,
+    TABLE_MAT_A_POS,
+    TABLE_MAT_B_POS,
+    TABLE_MAT_COLOR,
+    BACKDROP_BACK_SIZE,
+    BACKDROP_BACK_POS,
+    BACKDROP_SIDE_SIZE,
+    BACKDROP_SIDE_POS,
+    BACKDROP_COLOR,
     # Camera resolutions
     CAMERA_WIDTH, CAMERA_HEIGHT,
     WRIST_CAMERA_WIDTH, WRIST_CAMERA_HEIGHT,
@@ -162,6 +177,35 @@ def spawn_raw_and_assemble():
         kit.update()
 
 
+def make_static_cuboid_cfg(
+    prim_path: str,
+    size: tuple[float, float, float],
+    pos: tuple[float, float, float],
+) -> AssetBaseCfg:
+    """Create a static cuboid scene prop with collision."""
+    return AssetBaseCfg(
+        prim_path=prim_path,
+        spawn=sim_utils.CuboidCfg(
+            size=size,
+            rigid_props=sim_utils.RigidBodyPropertiesCfg(kinematic_enabled=True),
+            collision_props=sim_utils.CollisionPropertiesCfg(),
+        ),
+        init_state=AssetBaseCfg.InitialStateCfg(pos=pos),
+    )
+
+
+def make_table_cfg(prim_path: str, pos: tuple[float, float, float]) -> AssetBaseCfg:
+    """Create one Thorlabs table at the requested scene position."""
+    return AssetBaseCfg(
+        prim_path=prim_path,
+        spawn=sim_utils.UsdFileCfg(
+            usd_path=f"{ISAAC_NUCLEUS_DIR}/{TABLE_USD_RELATIVE}",
+            scale=TABLE_SCALE,
+        ),
+        init_state=AssetBaseCfg.InitialStateCfg(pos=pos, rot=TABLE_ROT),
+    )
+
+
 def make_target_cfg(name: str, info: dict) -> RigidObjectCfg:
     """Create the physical cuboid proxy for a YCB target object."""
     rigid_props = sim_utils.RigidBodyPropertiesCfg(
@@ -220,38 +264,26 @@ class SceneCfg(InteractiveSceneCfg):
             ),
             "gripper": ImplicitActuatorCfg(
                 joint_names_expr=list(GRIPPER_MIMIC_MAP.keys()),
-                stiffness=100.0,
-                damping=12.0,
-                effort_limit_sim=20.0,
+                stiffness=60.0,
+                damping=8.0,
+                effort_limit_sim=8.0,
             ),
         },
     )
 
-    table = AssetBaseCfg(
-        prim_path="/World/Table",
-        spawn=sim_utils.UsdFileCfg(
-            usd_path=f"{ISAAC_NUCLEUS_DIR}/Props/Mounts/ThorlabsTable/table_instanceable.usd",
-            scale=(1.8, 0.8, 1.0),
-        ),
-        init_state=AssetBaseCfg.InitialStateCfg(
-            pos=(1.17, 0.17, 1.05),
-            rot=(0.0, 0.0, 0.0, 1.0)
-            ),
+    table_a = make_table_cfg("/World/TableA", TABLE_A_POS)
+    table_b = make_table_cfg("/World/TableB", TABLE_B_POS)
+    mat_a = make_static_cuboid_cfg("/World/MatA", TABLE_MAT_SIZE, TABLE_MAT_A_POS)
+    mat_b = make_static_cuboid_cfg("/World/MatB", TABLE_MAT_SIZE, TABLE_MAT_B_POS)
+    backdrop_back = make_static_cuboid_cfg(
+        "/World/BackdropBack", BACKDROP_BACK_SIZE, BACKDROP_BACK_POS
     )
-    mat = AssetBaseCfg(
-        prim_path="/World/Mat",
-        spawn=sim_utils.CuboidCfg(
-            size=(1.2, 0.6, 0.01),
-            rigid_props=sim_utils.RigidBodyPropertiesCfg(kinematic_enabled=True),
-            collision_props=sim_utils.CollisionPropertiesCfg(),
-        ),
-        init_state=AssetBaseCfg.InitialStateCfg(
-            pos=(0.46, 0.17, 1.05),
-            rot=(0.0, 0.0, 0.0, 1.0)
-        ),
+    backdrop_side = make_static_cuboid_cfg(
+        "/World/BackdropSide", BACKDROP_SIDE_SIZE, BACKDROP_SIDE_POS
     )
     banana = make_target_cfg("banana", TARGETS["banana"])
-    mug = make_target_cfg("mug", TARGETS["mug"])
+    red_mug = make_target_cfg("red_mug", TARGETS["red_mug"])
+    blue_mug = make_target_cfg("blue_mug", TARGETS["blue_mug"])
 
     camera_main = CameraCfg(
         prim_path="/World/CameraMain",
@@ -304,6 +336,48 @@ class SceneCfg(InteractiveSceneCfg):
             ),
         ],
     )
+
+
+def apply_scene_colors(stage):
+    """Apply display colors to generated cuboid props after scene creation."""
+    prop_colors = {
+        "/World/MatA": TABLE_MAT_COLOR,
+        "/World/MatB": TABLE_MAT_COLOR,
+        "/World/BackdropBack": BACKDROP_COLOR,
+        "/World/BackdropSide": BACKDROP_COLOR,
+    }
+    for target_name, target_info in TARGETS.items():
+        if "color" in target_info:
+            prop_colors[f"/World/{target_name.capitalize()}/Visuals"] = target_info["color"]
+    for prim_path, color in prop_colors.items():
+        _set_display_color_recursive(stage, prim_path, color)
+
+
+def _set_display_color_recursive(stage, prim_path: str, color: tuple[float, float, float]) -> None:
+    from pxr import Gf, Sdf, Usd, UsdGeom, UsdShade
+
+    root = stage.GetPrimAtPath(prim_path)
+    if not root.IsValid():
+        log(f"Scene color skipped, prim not found: {prim_path}")
+        return
+
+    material_name = prim_path.strip("/").replace("/", "_")
+    material = UsdShade.Material.Define(stage, f"/World/Looks/{material_name}_Material")
+    shader = UsdShade.Shader.Define(stage, f"/World/Looks/{material_name}_Material/Shader")
+    shader.CreateIdAttr("UsdPreviewSurface")
+    shader.CreateInput("diffuseColor", Sdf.ValueTypeNames.Color3f).Set(Gf.Vec3f(*color))
+    shader.CreateInput("roughness", Sdf.ValueTypeNames.Float).Set(0.8)
+    material.CreateSurfaceOutput().ConnectToSource(shader.ConnectableAPI(), "surface")
+
+    applied = False
+    for prim in Usd.PrimRange(root):
+        gprim = UsdGeom.Gprim(prim)
+        if gprim:
+            gprim.CreateDisplayColorAttr([color])
+            UsdShade.MaterialBindingAPI(prim).Bind(material)
+            applied = True
+    if not applied:
+        log(f"Scene color skipped, no Gprim under: {prim_path}")
 
 
 def hide_proxy_meshes(stage, target_keys):

@@ -8,7 +8,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-_extra = argparse.ArgumentParser(add_help=False)
+_extra = argparse.ArgumentParser(add_help=False, allow_abbrev=False)
 _extra.add_argument("--instruction", type=str, default="pick up the object")
 _extra.add_argument("--vla-server", type=str, default="http://localhost:8000")
 _extra.add_argument(
@@ -28,6 +28,25 @@ _extra.add_argument(
     type=int,
     default=600,
     help="Maximum simulation steps. Use 0 to run until interrupted.",
+)
+_extra.add_argument(
+    "--camera",
+    type=str,
+    default="camera_main",
+    choices=("camera_main", "camera_wrist"),
+    help="Camera observation sent to the VLA policy.",
+)
+_extra.add_argument(
+    "--unnorm-key",
+    type=str,
+    default="ur3e_vla_dataset",
+    help="OpenVLA action unnormalization key.",
+)
+_extra.add_argument(
+    "--lock-orientation",
+    action=argparse.BooleanOptionalAction,
+    default=True,
+    help="Keep the end-effector orientation fixed during VLA rollout.",
 )
 _extra_args, _ = _extra.parse_known_args()
 
@@ -62,9 +81,10 @@ from vla_sim.scene import (
     enable_extensions,
     spawn_raw_and_assemble,
     SceneCfg,
+    apply_scene_colors,
     hide_proxy_meshes,
 )
-from vla_sim.actions import apply_delta_action
+from vla_sim.actions import apply_delta_action, clamp_action
 from vla_sim.vla_client import VLAClient
 
 
@@ -75,6 +95,9 @@ def main():
     step_interval = _extra_args.vla_step_interval
     action_scale = _extra_args.action_scale
     max_steps = _extra_args.max_steps
+    camera_name = _extra_args.camera
+    unnorm_key = _extra_args.unnorm_key
+    lock_orientation = _extra_args.lock_orientation
 
     log(f"Target: {target_name}")
     log(f"Instruction: '{instruction}'")
@@ -82,6 +105,9 @@ def main():
     log(f"VLA call every {step_interval} sim steps "
         f"(= {60/step_interval:.1f} Hz at 60Hz sim)")
     log(f"Action scale: {action_scale}")
+    log(f"VLA camera: {camera_name}")
+    log(f"Unnorm key: {unnorm_key}")
+    log(f"Lock orientation: {lock_orientation}")
 
     vla = VLAClient(vla_server)
     log("[VLA] Checking server health...")
@@ -158,6 +184,7 @@ def main():
 
     sim_dt = sim.get_physics_dt()
     stage = omni.usd.get_context().get_stage()
+    apply_scene_colors(stage)
     hide_proxy_meshes(stage, TARGETS.keys())
 
     robot = scene["robot"]
@@ -244,32 +271,46 @@ def main():
     step = 0
     last_log_t = time.monotonic()
     last_vla_action = np.zeros(7, dtype=np.float32)
+    last_action_id = 0
+    applied_action_id = 0
+    action_lock = threading.Lock()
 
     try:
         while app.is_running():
             if step % step_interval == 0:
-                cam_data = scene["camera_wrist"].data.output.get("rgb")
+                cam_data = scene[camera_name].data.output.get("rgb")
                 if cam_data is not None:
                     rgb_np = cam_data[0].cpu().numpy().astype(np.uint8)
 
                     def _async_predict():
-                        nonlocal last_vla_action
-                        action = vla.predict(rgb_np, instruction, log=log)
-                        last_vla_action = action
+                        nonlocal last_vla_action, last_action_id
+                        action = clamp_action(vla.predict(rgb_np, instruction, unnorm_key=unnorm_key, log=log))
+                        with action_lock:
+                            last_vla_action = action
+                            last_action_id += 1
 
                     t = threading.Thread(target=_async_predict, daemon=True)
                     t.start()
 
-            # Use the latest action without blocking the simulation loop.
-            if step % step_interval == 0 and not np.all(last_vla_action == 0):
+            # Apply each predicted action once. Re-applying a stale action can
+            # push the IK target out of distribution while async inference is slow.
+            action_to_apply = None
+            with action_lock:
+                if last_action_id > applied_action_id:
+                    action_to_apply = last_vla_action.copy()
+                    applied_action_id = last_action_id
+
+            if action_to_apply is not None and not np.all(action_to_apply == 0):
                 new_pos, new_quat, new_grip = apply_delta_action(
                     ee_target_pos, ee_target_quat,
-                    last_vla_action, action_scale,
+                    action_to_apply, action_scale,
                     ws_x, ws_y, ws_z,
                 )
                 ee_target_pos = new_pos
-                ee_target_quat = new_quat
+                if not lock_orientation:
+                    ee_target_quat = new_quat
                 gripper_target = new_grip
+                log(f"[VLA] apply action#{applied_action_id}: {action_to_apply.round(4).tolist()}")
 
             root_pos = robot.data.root_state_w[:, :3]
             ee_pose_w = robot.data.body_state_w[:, ee_body_idx, :7]

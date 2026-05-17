@@ -8,7 +8,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-_extra = argparse.ArgumentParser(add_help=False)
+_extra = argparse.ArgumentParser(add_help=False, allow_abbrev=False)
 _extra.add_argument("--episodes", type=int, default=5,
                     help="Number of successful episodes to collect.")
 _extra.add_argument("--output-dir", type=str, default="outputs/data",
@@ -26,6 +26,11 @@ _extra.add_argument("--keep-sim-alive", action=argparse.BooleanOptionalAction, d
 _extra.add_argument("--show-gui", action="store_true",
                     help="Show the Isaac Sim GUI while collecting demos.")
 _extra.add_argument("--seed", type=int, default=42)
+_extra.add_argument(
+    "--overwrite",
+    action="store_true",
+    help="Remove the existing target demos.h5 before collecting new episodes.",
+)
 _extra_args, _ = _extra.parse_known_args()
 
 if not _extra_args.show_gui and "--headless" not in sys.argv:
@@ -60,6 +65,7 @@ from vla_sim.scene import (
     enable_extensions,
     spawn_raw_and_assemble,
     SceneCfg,
+    apply_scene_colors,
     hide_proxy_meshes,
 )
 from vla_sim.actions import PoseTrajectoryPlayer, compute_action_from_ee_poses
@@ -230,7 +236,7 @@ def run_one_episode(
     GRASP_POS = (tx, ty + target_info["y_nudge"], grasp_z)
 
     trajectory = [
-        (3.0, HOME_POS,  EE_ORIENT_DOWN, GRIPPER_OPEN),
+        (0.0, HOME_POS,  EE_ORIENT_DOWN, GRIPPER_OPEN),
         (4.0, HOVER_POS, EE_ORIENT_DOWN, GRIPPER_OPEN),
         (3.0, GRASP_POS, EE_ORIENT_DOWN, GRIPPER_OPEN),
         (2.0, GRASP_POS, EE_ORIENT_DOWN, GRIPPER_CLOSE),
@@ -383,13 +389,17 @@ def run_one_episode(
 def main():
     target_name = args_cli.target
     target_info = TARGETS[target_name]
-    instruction = f"pick up the {target_name}"
+    instruction = f"pick up the {target_name.replace('_', ' ')}"
 
     out_dir_rel = Path(_extra_args.output_dir)
     out_dir = out_dir_rel if out_dir_rel.is_absolute() else PROJECT_ROOT / out_dir_rel
     if out_dir.name != target_name:
         out_dir = out_dir / target_name
     out_dir.mkdir(parents=True, exist_ok=True)
+    h5_path = out_dir / "demos.h5"
+    if _extra_args.overwrite and h5_path.exists():
+        h5_path.unlink()
+        log(f"Removed existing dataset: {h5_path}")
 
     n_target_episodes = _extra_args.episodes
     max_tried = _extra_args.max_episodes_tried or max(n_target_episodes * 3, n_target_episodes + 10)
@@ -431,6 +441,7 @@ def main():
     sim_dt = sim.get_physics_dt()
 
     stage = omni.usd.get_context().get_stage()
+    apply_scene_colors(stage)
     hide_proxy_meshes(stage, TARGETS.keys())
 
     robot = scene["robot"]
@@ -514,7 +525,6 @@ def main():
             log(f"  SUCCESS  lift={diag['obj_lift_height']:.3f}m  "
                 f"target_dist={diag.get('ee_target_dist', 0):.3f}m  "
                 f"steps={diag['num_steps_recorded']}")
-            h5_path = out_dir / "demos.h5"
             meta = {
                 "episode_id": ep_id,
                 "target": target_name,

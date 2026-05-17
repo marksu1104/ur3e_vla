@@ -22,6 +22,9 @@ class EpisodeBuffer:
 def build_episode_arrays(buffer: EpisodeBuffer, instruction: str) -> dict:
     """Convert an episode buffer into fixed arrays for HDF5 storage."""
     num_steps = len(buffer.ee_poses)
+    raw_actions = [
+        np.asarray(action, dtype=np.float32) for action in buffer.actions_7d
+    ]
 
     robot_states = []
     actions = []
@@ -42,10 +45,18 @@ def build_episode_arrays(buffer: EpisodeBuffer, instruction: str) -> dict:
         )
 
         is_last = idx == num_steps - 1
+        if is_last:
+            policy_action = np.zeros(7, dtype=np.float32)
+            policy_action[6] = raw_actions[idx][6]
+        else:
+            # The action stored with the next recorded frame is the transition
+            # from the current observation to that next frame.
+            policy_action = raw_actions[idx + 1]
+
         actions.append(
             np.concatenate(
                 [
-                    np.asarray(buffer.actions_7d[idx], dtype=np.float32),
+                    policy_action,
                     np.array([1.0 if is_last else 0.0], dtype=np.float32),
                 ]
             ).astype(np.float32)

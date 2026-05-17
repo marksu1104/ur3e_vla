@@ -37,7 +37,7 @@ class VLAClient:
         self,
         rgb: np.ndarray,
         instruction: str,
-        unnorm_key: str = "bridge_orig",
+        unnorm_key: str = "ur3e_vla_dataset",
         log=print,
     ) -> np.ndarray:
         """Send an RGB image and instruction, then return a 7D action."""
