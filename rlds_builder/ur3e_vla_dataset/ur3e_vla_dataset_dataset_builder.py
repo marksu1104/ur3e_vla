@@ -55,7 +55,7 @@ class Ur3eVlaDataset(tfds.core.GeneratorBasedBuilder):
                             "action": tfds.features.Tensor(
                                 shape=(8,),
                                 dtype=np.float32,
-                                doc="7D policy action plus terminal flag.",
+                                doc="7D policy action plus terminal flag. OpenVLA transform drops the final flag.",
                             ),
                             "discount": tfds.features.Scalar(
                                 dtype=np.float32,
@@ -102,8 +102,12 @@ class Ur3eVlaDataset(tfds.core.GeneratorBasedBuilder):
         )
 
     def _split_generators(self, dl_manager: tfds.download.DownloadManager):
-        h5_path = self._resolve_h5_path()
-        demo_names = self._list_demo_names(h5_path)
+        h5_paths = self._resolve_h5_paths()
+        demo_refs = [
+            (h5_path, demo_name)
+            for h5_path in h5_paths
+            for demo_name in self._list_demo_names(h5_path)
+        ]
 
         seed = int(os.environ.get("UR3E_VLA_SPLIT_SEED", "42"))
         val_ratio = float(os.environ.get("UR3E_VLA_VAL_RATIO", "0.1"))
@@ -111,25 +115,24 @@ class Ur3eVlaDataset(tfds.core.GeneratorBasedBuilder):
             raise ValueError("UR3E_VLA_VAL_RATIO must be in [0, 1).")
 
         rng = random.Random(seed)
-        shuffled = list(demo_names)
+        shuffled = list(demo_refs)
         rng.shuffle(shuffled)
 
         n_val = int(round(len(shuffled) * val_ratio))
-        val_names = set(shuffled[:n_val])
-        train_names = [name for name in demo_names if name not in val_names]
-        val_names = [name for name in demo_names if name in val_names]
+        val_refs = set(shuffled[:n_val])
+        train_refs = [ref for ref in demo_refs if ref not in val_refs]
+        val_refs = [ref for ref in demo_refs if ref in val_refs]
 
         splits = {
-            "train": self._generate_examples(h5_path=h5_path, demo_names=train_names),
+            "train": self._generate_examples(demo_refs=train_refs),
         }
-        if val_names:
-            splits["val"] = self._generate_examples(h5_path=h5_path, demo_names=val_names)
+        if val_refs:
+            splits["val"] = self._generate_examples(demo_refs=val_refs)
         return splits
 
     def _generate_examples(
         self,
-        h5_path: Path,
-        demo_names: list[str],
+        demo_refs: list[tuple[Path, str]],
     ) -> Iterator[Tuple[str, Any]]:
         try:
             import h5py
@@ -138,13 +141,20 @@ class Ur3eVlaDataset(tfds.core.GeneratorBasedBuilder):
                 "h5py is required to build this dataset. Install it in rlds_env."
             ) from exc
 
-        with h5py.File(h5_path, "r") as h5_file:
-            data_group = h5_file["data"]
-            for demo_name in demo_names:
-                demo = data_group[demo_name]
-                if not bool(demo.attrs.get("success", True)):
-                    continue
-                yield demo_name, self._parse_demo(h5_path, demo_name, demo)
+        grouped_refs: dict[Path, list[str]] = {}
+        for h5_path, demo_name in demo_refs:
+            grouped_refs.setdefault(h5_path, []).append(demo_name)
+
+        for h5_path, demo_names in grouped_refs.items():
+            with h5py.File(h5_path, "r") as h5_file:
+                data_group = h5_file["data"]
+                source_id = self._source_id(h5_path)
+                for demo_name in demo_names:
+                    demo = data_group[demo_name]
+                    if not bool(demo.attrs.get("success", True)):
+                        continue
+                    example_key = f"{source_id}/{demo_name}"
+                    yield example_key, self._parse_demo(h5_path, demo_name, demo)
 
     def _parse_demo(self, h5_path: Path, demo_name: str, demo) -> dict:
         image = np.asarray(demo["image"], dtype=np.uint8)
@@ -188,28 +198,47 @@ class Ur3eVlaDataset(tfds.core.GeneratorBasedBuilder):
             },
         }
 
-    def _resolve_h5_path(self) -> Path:
-        env_path = os.environ.get("UR3E_VLA_H5_PATH")
-        if env_path:
-            h5_path = Path(env_path).expanduser()
+    def _resolve_h5_paths(self) -> list[Path]:
+        env_paths = os.environ.get("UR3E_VLA_H5_PATHS")
+        if env_paths:
+            h5_paths = [
+                Path(path.strip()).expanduser()
+                for path in env_paths.split(",")
+                if path.strip()
+            ]
+        elif os.environ.get("UR3E_VLA_H5_PATH"):
+            h5_paths = [Path(os.environ["UR3E_VLA_H5_PATH"]).expanduser()]
         else:
             builder_dir = Path(__file__).resolve().parent
-            h5_path = (
-                builder_dir
-                / ".."
-                / ".."
-                / "outputs"
-                / "data"
-                / "mug"
-                / "demos.h5"
-            ).resolve()
+            h5_paths = [
+                (
+                    builder_dir
+                    / ".."
+                    / ".."
+                    / "outputs"
+                    / "data"
+                    / "mug"
+                    / "demos.h5"
+                ).resolve()
+            ]
 
-        if not h5_path.exists():
+        if not h5_paths:
+            raise ValueError("UR3E_VLA_H5_PATHS did not contain any paths.")
+
+        missing_paths = [h5_path for h5_path in h5_paths if not h5_path.exists()]
+        if missing_paths:
+            missing = ", ".join(str(path) for path in missing_paths)
             raise FileNotFoundError(
-                f"Could not find HDF5 dataset: {h5_path}. "
-                "Set UR3E_VLA_H5_PATH=/path/to/demos.h5."
+                f"Could not find HDF5 dataset(s): {missing}. "
+                "Set UR3E_VLA_H5_PATH=/path/to/demos.h5 or "
+                "UR3E_VLA_H5_PATHS=/path/a.h5,/path/b.h5."
             )
-        return h5_path
+        return h5_paths
+
+    @staticmethod
+    def _source_id(h5_path: Path) -> str:
+        parent = h5_path.parent.name
+        return parent if parent else h5_path.stem
 
     @staticmethod
     def _list_demo_names(h5_path: Path) -> list[str]:

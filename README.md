@@ -73,6 +73,7 @@ cd ~/IsaacLab
     --episodes 5 \
     --output-dir outputs/data \
     --seed 42 \
+    --overwrite \
     --show-gui
 ```
 
@@ -81,7 +82,7 @@ single HDF5 file, for example:
 
 ```text
 outputs/data/red_mug/demos.h5
-outputs/data/banana/demos.h5
+outputs/data/blue_mug/demos.h5
 ```
 
 Each episode group stores:
@@ -121,7 +122,7 @@ The builder emits RLDS steps with:
 observation/image
 observation/hand_image
 observation/state
-action
+action  # 8D in TFDS: 7D policy action + terminal flag; OpenVLA transform drops the flag.
 language_instruction
 language_embedding
 is_first

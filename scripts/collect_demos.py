@@ -1,6 +1,7 @@
 """Collect scripted UR3e grasp demonstrations for VLA fine-tuning."""
 
 import argparse
+import os
 import sys
 from pathlib import Path
 
@@ -21,7 +22,7 @@ _extra.add_argument("--randomize-rot", action=argparse.BooleanOptionalAction, de
                     help="Randomize target yaw while preserving base orientation.")
 _extra.add_argument("--randomize-light", action=argparse.BooleanOptionalAction, default=True,
                     help="Randomize dome light intensity and color.")
-_extra.add_argument("--keep-sim-alive", action=argparse.BooleanOptionalAction, default=True,
+_extra.add_argument("--keep-sim-alive", action=argparse.BooleanOptionalAction, default=False,
                     help="Keep simulation open after collection.")
 _extra.add_argument("--show-gui", action="store_true",
                     help="Show the Isaac Sim GUI while collecting demos.")
@@ -39,6 +40,21 @@ if not _extra_args.show_gui and "--headless" not in sys.argv:
 from vla_sim.isaac_app import boot_app, args_cli, log
 
 app = boot_app()
+_app_closed = False
+
+
+def close_app_once():
+    """Close Isaac Sim once; some Kit versions are unhappy with duplicate close calls."""
+    global _app_closed
+    if _app_closed:
+        return
+    _app_closed = True
+    try:
+        app.close(wait_for_replicator=False)
+    except TypeError:
+        app.close()
+
+
 import time
 import random
 import traceback
@@ -88,14 +104,41 @@ def quat_mul(q1, q2):
     )
 
 
+
+def yaw_from_quat_wxyz(q) -> float:
+    """Return world-Z yaw from a wxyz quaternion."""
+    w, x, y, z = q
+    siny_cosp = 2.0 * (w * z + x * y)
+    cosy_cosp = 1.0 - 2.0 * (y * y + z * z)
+    return float(np.arctan2(siny_cosp, cosy_cosp))
+
+
+def sample_grasp_quat(target_info: dict, spawn_rot: tuple, rng: np.random.Generator) -> tuple:
+    """Sample gripper yaw while avoiding the mug handle direction."""
+    if not target_info.get("align_gripper_to_yaw"):
+        return EE_ORIENT_DOWN
+
+    object_yaw = yaw_from_quat_wxyz(spawn_rot)
+    offsets = target_info.get("grasp_yaw_offsets", (-np.pi / 2.0, np.pi / 2.0))
+    offset = float(rng.choice(np.asarray(offsets, dtype=np.float32)))
+    jitter_range = target_info.get("grasp_yaw_jitter", (-0.20, 0.20))
+    jitter = float(rng.uniform(*jitter_range))
+    grasp_yaw = object_yaw + offset + jitter + float(target_info.get("gripper_yaw_offset", 0.0))
+    yaw_quat = (np.cos(grasp_yaw / 2.0), 0.0, 0.0, np.sin(grasp_yaw / 2.0))
+    return quat_mul(yaw_quat, EE_ORIENT_DOWN)
+
+
 def randomize_target_pose(target_info: dict, rng: np.random.Generator) -> tuple:
     """Return randomized target position and orientation."""
     base_x, base_y, base_z = target_info["spawn_pos"]
     base_rot = target_info.get("spawn_rot", (1.0, 0.0, 0.0, 0.0))
 
     if _extra_args.randomize_pos:
-        rand_x = base_x + rng.uniform(-0.08, 0.08)
-        rand_y = base_y + rng.uniform(-0.10, 0.10)
+        pos_randomization = target_info.get("pos_randomization", {})
+        x_range = pos_randomization.get("x", (-0.08, 0.08))
+        y_range = pos_randomization.get("y", (-0.10, 0.10))
+        rand_x = base_x + rng.uniform(*x_range)
+        rand_y = base_y + rng.uniform(*y_range)
     else:
         rand_x, rand_y = base_x, base_y
 
@@ -108,6 +151,38 @@ def randomize_target_pose(target_info: dict, rng: np.random.Generator) -> tuple:
         spawn_rot = base_rot
 
     return (rand_x, rand_y, base_z), spawn_rot
+
+
+MUG_TARGET_KEYS = ("red_mug", "blue_mug")
+MIN_OBJECT_XY_DIST = 0.12
+MIN_PLACE_XY_DIST = 0.12
+
+
+def _xy_dist(a: tuple, b: tuple) -> float:
+    return float(np.linalg.norm(np.asarray(a[:2]) - np.asarray(b[:2])))
+
+
+def sample_scene_object_poses(targets: dict, rng: np.random.Generator) -> dict:
+    """Sample per-episode mug poses while avoiding overlaps and the place point."""
+    sampled: dict[str, tuple[tuple, tuple]] = {}
+    for key in MUG_TARGET_KEYS:
+        if key not in targets:
+            continue
+        info = targets[key]
+        for _ in range(100):
+            pos, rot = randomize_target_pose(info, rng)
+            if _xy_dist(pos, HOME_POS) < MIN_PLACE_XY_DIST:
+                continue
+            if any(_xy_dist(pos, other_pos) < MIN_OBJECT_XY_DIST for other_pos, _ in sampled.values()):
+                continue
+            sampled[key] = (pos, rot)
+            break
+        else:
+            base_pos = info["spawn_pos"]
+            base_rot = info.get("spawn_rot", (1.0, 0.0, 0.0, 0.0))
+            sampled[key] = (base_pos, base_rot)
+            log(f"  WARNING: using base pose for {key}; could not sample non-overlapping pose")
+    return sampled
 
 
 def randomize_lighting(stage, rng: np.random.Generator):
@@ -132,26 +207,40 @@ def randomize_lighting(stage, rng: np.random.Generator):
 
 
 def detect_success(
-    target_obj, ee_pos: np.ndarray, target_initial_z: float,
+    target_obj,
+    ee_pos: np.ndarray,
+    target_initial_z: float,
     gripper_q: float,
+    place_pos: tuple,
+    best_lift_height: float,
+    place_xy_threshold: float = 0.10,
 ) -> tuple[bool, dict]:
-    """Check whether an episode satisfies the grasp success criteria."""
+    """Check whether the object was lifted and delivered to the target place."""
     obj_pos = target_obj.data.root_pos_w[0].cpu().numpy()
+    place_pos_np = np.asarray(place_pos, dtype=np.float32)
 
-    obj_lifted = (obj_pos[2] - target_initial_z) > 0.05
+    obj_lift_height = float(obj_pos[2] - target_initial_z)
+    obj_place_xy_dist = float(np.linalg.norm(obj_pos[:2] - place_pos_np[:2]))
+    obj_lifted = best_lift_height > 0.04
+    obj_at_place = obj_place_xy_dist < place_xy_threshold
+    ee_safe = bool((1.05 < ee_pos[2] < 1.7) and (-0.5 < ee_pos[0] < 0.7))
     gripper_closed = gripper_q > 0.3
-    ee_safe = (1.05 < ee_pos[2] < 1.7) and (-0.5 < ee_pos[0] < 0.7)
-    obj_near_ee = np.linalg.norm(obj_pos - ee_pos) < 0.20
+    obj_near_ee = bool(np.linalg.norm(obj_pos - ee_pos) < 0.25)
 
-    success = obj_lifted and gripper_closed and ee_safe and obj_near_ee
+    success = obj_lifted and obj_at_place and ee_safe
     return success, {
-        "obj_lifted": obj_lifted,
-        "gripper_closed": gripper_closed,
+        "obj_lifted": bool(obj_lifted),
+        "obj_at_place": bool(obj_at_place),
+        "gripper_closed": bool(gripper_closed),
         "ee_safe": ee_safe,
         "obj_near_ee": obj_near_ee,
         "obj_pos_final": obj_pos.tolist(),
         "ee_pos_final": ee_pos.tolist(),
-        "obj_lift_height": float(obj_pos[2] - target_initial_z),
+        "obj_lift_height": obj_lift_height,
+        "best_lift_height": float(best_lift_height),
+        "obj_place_xy_dist": obj_place_xy_dist,
+        "place_pos": place_pos_np.tolist(),
+        "place_xy_threshold": float(place_xy_threshold),
     }
 
 
@@ -196,14 +285,23 @@ def run_one_episode(
     """Run one scripted episode and return success, data, and diagnostics."""
     device = str(sim.device)
 
-    spawn_pos, spawn_rot = randomize_target_pose(target_info, rng)
+    scene_object_poses = sample_scene_object_poses(TARGETS, rng)
+    if target_name not in scene_object_poses:
+        scene_object_poses[target_name] = randomize_target_pose(target_info, rng)
 
-    new_state = torch.tensor(
-        [[*spawn_pos, *spawn_rot, 0, 0, 0, 0, 0, 0]],
-        device=device, dtype=torch.float32,
-    )  # (1, 13) = pos(3) + quat(4) + lin_vel(3) + ang_vel(3)
-    target_obj.write_root_pose_to_sim(new_state[:, :7])
-    target_obj.write_root_velocity_to_sim(torch.zeros((1, 6), device=device))
+    for object_name, (object_pos, object_rot) in scene_object_poses.items():
+        try:
+            object_obj = scene[object_name]
+        except Exception:
+            continue
+        object_state = torch.tensor(
+            [[*object_pos, *object_rot, 0, 0, 0, 0, 0, 0]],
+            device=device, dtype=torch.float32,
+        )
+        object_obj.write_root_pose_to_sim(object_state[:, :7])
+        object_obj.write_root_velocity_to_sim(torch.zeros((1, 6), device=device))
+
+    spawn_pos, spawn_rot = scene_object_poses[target_name]
 
     # 把手臂送回 home pose
     home_q_t = torch.tensor([HOME_Q], device=device, dtype=torch.float32)
@@ -234,14 +332,15 @@ def run_one_episode(
 
     HOVER_POS = (tx, ty + target_info["y_nudge"], hover_z)
     GRASP_POS = (tx, ty + target_info["y_nudge"], grasp_z)
+    grasp_quat = sample_grasp_quat(target_info, spawn_rot, rng)
 
     trajectory = [
         (0.0, HOME_POS,  EE_ORIENT_DOWN, GRIPPER_OPEN),
-        (4.0, HOVER_POS, EE_ORIENT_DOWN, GRIPPER_OPEN),
-        (3.0, GRASP_POS, EE_ORIENT_DOWN, GRIPPER_OPEN),
-        (2.0, GRASP_POS, EE_ORIENT_DOWN, GRIPPER_CLOSE),
-        (3.0, HOVER_POS, EE_ORIENT_DOWN, GRIPPER_CLOSE),
-        (3.0, HOME_POS,  EE_ORIENT_DOWN, GRIPPER_CLOSE),
+        (4.0, HOVER_POS, grasp_quat, GRIPPER_OPEN),
+        (3.0, GRASP_POS, grasp_quat, GRIPPER_OPEN),
+        (2.0, GRASP_POS, grasp_quat, GRIPPER_CLOSE),
+        (3.0, HOVER_POS, grasp_quat, GRIPPER_CLOSE),
+        (3.0, HOME_POS,  grasp_quat, GRIPPER_CLOSE),
         (2.0, HOME_POS,  EE_ORIENT_DOWN, GRIPPER_OPEN),
     ]
     player = PoseTrajectoryPlayer(trajectory, device=device)
@@ -260,6 +359,7 @@ def run_one_episode(
     finished_at = None
     success_seen = False
     success_diag = None
+    best_lift_height = 0.0
 
     while True:
         tgt_pos_w, tgt_quat_w, grip_target, finished = player.sample(t_sim)
@@ -306,20 +406,8 @@ def run_one_episode(
         sim.step()
         scene.update(sim_dt)
 
-        # The YCB visual mesh is attached to a proxy, so the RigidObject root
-        # pose may not reflect visible object motion. Use EE target reach as
-        # the primary success signal for now.
-        if not success_seen:
-            ee_pos_check = robot.data.body_state_w[0, ee_body_idx, :3].cpu().numpy()
-            if grip_target > 0.2:
-                success_now, diag_now = detect_target_reached(
-                    ee_pos_check, HOVER_POS, target_initial_z,
-                )
-                if success_now:
-                    success_seen = True
-                    success_diag = diag_now
-                    success_diag["success_step"] = int(step)
-                    success_diag["success_time"] = float(t_sim)
+        obj_pos_check = target_obj.data.root_pos_w[0].cpu().numpy()
+        best_lift_height = max(best_lift_height, float(obj_pos_check[2] - target_initial_z))
 
         if step % record_every_n_steps == 0:
             # Read current state
@@ -371,17 +459,28 @@ def run_one_episode(
         t_sim += sim_dt
         step += 1
 
-    if success_seen:
-        success = True
-        diag = success_diag
-    else:
-        ee_pos_final = robot.data.body_state_w[0, ee_body_idx, :3].cpu().numpy()
-        success, diag = detect_target_reached(ee_pos_final, HOVER_POS, target_initial_z)
+    ee_pos_final = robot.data.body_state_w[0, ee_body_idx, :3].cpu().numpy()
+    success, diag = detect_success(
+        target_obj,
+        ee_pos_final,
+        target_initial_z,
+        last_grip_target,
+        HOME_POS,
+        best_lift_height,
+    )
 
     diag["target_initial_pos"]  = list(map(float, target_resting.tolist()))
     diag["num_steps_recorded"]  = len(buffer.main_images)
     diag["spawn_pos"]           = list(map(float, spawn_pos))
     diag["spawn_rot"]           = list(map(float, spawn_rot))
+    diag["grasp_quat"]          = list(map(float, grasp_quat))
+    diag["scene_object_poses"]  = {
+        name: {
+            "pos": list(map(float, pose[0])),
+            "rot": list(map(float, pose[1])),
+        }
+        for name, pose in scene_object_poses.items()
+    }
 
     return success, (buffer if success else None), diag
 
@@ -400,6 +499,17 @@ def main():
     if _extra_args.overwrite and h5_path.exists():
         h5_path.unlink()
         log(f"Removed existing dataset: {h5_path}")
+    elif h5_path.exists():
+        try:
+            import h5py
+            with h5py.File(h5_path, "r") as h5_file:
+                existing_count = len(h5_file.get("data", {}))
+        except Exception:
+            existing_count = "unknown"
+        log(
+            f"WARNING: appending to existing dataset: {h5_path} "
+            f"(existing episodes: {existing_count}). Use --overwrite to start fresh."
+        )
 
     n_target_episodes = _extra_args.episodes
     max_tried = _extra_args.max_episodes_tried or max(n_target_episodes * 3, n_target_episodes + 10)
@@ -428,6 +538,9 @@ def main():
     log("Attaching YCB visual meshes...")
     from isaacsim.core.utils.stage import add_reference_to_stage
     for target_key, info in TARGETS.items():
+        if info.get("collision_usd"):
+            log(f"  {target_key}: using local collision USD, skip visual attach")
+            continue
         usd_abs = f"{ISAAC_NUCLEUS_DIR}/{info['usd_relative']}"
         visual_path = f"/World/{target_key.capitalize()}/Visuals"
         try:
@@ -523,7 +636,8 @@ def main():
 
         if success:
             log(f"  SUCCESS  lift={diag['obj_lift_height']:.3f}m  "
-                f"target_dist={diag.get('ee_target_dist', 0):.3f}m  "
+                f"best_lift={diag.get('best_lift_height', 0):.3f}m  "
+                f"place_dist={diag.get('obj_place_xy_dist', 0):.3f}m  "
                 f"steps={diag['num_steps_recorded']}")
             meta = {
                 "episode_id": ep_id,
@@ -546,10 +660,11 @@ def main():
                 f"tried={n_tried}/{max_tried}")
         else:
             log(f"  FAILED   lift={diag.get('obj_lift_height', 0):.3f}m  "
-                f"lifted={diag.get('obj_lifted')}  grip={diag.get('gripper_closed')}  "
-                f"near={diag.get('obj_near_ee')}  "
-                f"target_reached={diag.get('target_reached')}  "
-                f"target_dist={diag.get('ee_target_dist', 0):.3f}m")
+                f"best_lift={diag.get('best_lift_height', 0):.3f}m  "
+                f"lifted={diag.get('obj_lifted')}  "
+                f"at_place={diag.get('obj_at_place')}  "
+                f"place_dist={diag.get('obj_place_xy_dist', 0):.3f}m  "
+                f"ee_safe={diag.get('ee_safe')}")
             log(f"  Progress: success={n_success}/{n_target_episodes}, "
                 f"tried={n_tried}/{max_tried}")
 
@@ -575,11 +690,14 @@ def main():
         except KeyboardInterrupt:
             log("Ctrl+C received. Closing simulation.")
     else:
-        sim.stop()
+        log("Collection complete. Exiting process.")
+        sys.stdout.flush()
+        sys.stderr.flush()
+        os._exit(0)
 
 
 if __name__ == "__main__":
     try:
         main()
     finally:
-        app.close()
+        close_app_once()

@@ -207,7 +207,7 @@ def make_table_cfg(prim_path: str, pos: tuple[float, float, float]) -> AssetBase
 
 
 def make_target_cfg(name: str, info: dict) -> RigidObjectCfg:
-    """Create the physical cuboid proxy for a YCB target object."""
+    """Create a target object from a collision USD or a cuboid proxy."""
     rigid_props = sim_utils.RigidBodyPropertiesCfg(
         rigid_body_enabled=True,
         solver_position_iteration_count=16,
@@ -218,15 +218,25 @@ def make_target_cfg(name: str, info: dict) -> RigidObjectCfg:
         linear_damping=0.2,
         angular_damping=0.2,
     )
-    spawn_cfg = sim_utils.CuboidCfg(
-        size=info["size"],
-        rigid_props=rigid_props,
-        mass_props=sim_utils.MassPropertiesCfg(mass=info["mass"]),
-        collision_props=sim_utils.CollisionPropertiesCfg(
-            torsional_patch_radius=0.05,
-            min_torsional_patch_radius=0.05,
-        ),
+    mass_props = sim_utils.MassPropertiesCfg(mass=info["mass"])
+    collision_props = sim_utils.CollisionPropertiesCfg(
+        torsional_patch_radius=0.05,
+        min_torsional_patch_radius=0.05,
     )
+    if info.get("collision_usd"):
+        spawn_cfg = sim_utils.UsdFileCfg(
+            usd_path=str(ASSET_DIR / info["collision_usd"]),
+            rigid_props=rigid_props,
+            mass_props=mass_props,
+            collision_props=collision_props,
+        )
+    else:
+        spawn_cfg = sim_utils.CuboidCfg(
+            size=info["size"],
+            rigid_props=rigid_props,
+            mass_props=mass_props,
+            collision_props=collision_props,
+        )
     return RigidObjectCfg(
         prim_path=f"/World/{name.capitalize()}",
         spawn=spawn_cfg,
@@ -348,7 +358,11 @@ def apply_scene_colors(stage):
     }
     for target_name, target_info in TARGETS.items():
         if "color" in target_info:
-            prop_colors[f"/World/{target_name.capitalize()}/Visuals"] = target_info["color"]
+            target_root = f"/World/{target_name.capitalize()}"
+            if target_info.get("collision_usd"):
+                prop_colors[target_root] = target_info["color"]
+            else:
+                prop_colors[f"{target_root}/Visuals"] = target_info["color"]
     for prim_path, color in prop_colors.items():
         _set_display_color_recursive(stage, prim_path, color)
 
@@ -385,6 +399,8 @@ def hide_proxy_meshes(stage, target_keys):
     from pxr import UsdGeom
 
     for target_key in target_keys:
+        if TARGETS[target_key].get("collision_usd"):
+            continue
         for sub in ("Visuals/geometry/mesh", "geometry/mesh"):
             mesh_path = f"/World/{target_key.capitalize()}/{sub}"
             mesh_prim = stage.GetPrimAtPath(mesh_path)

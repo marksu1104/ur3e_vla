@@ -155,6 +155,9 @@ def main():
     from isaacsim.core.utils.stage import add_reference_to_stage
     import omni.client as _client
     for target_key, info in TARGETS.items():
+        if info.get("collision_usd"):
+            log(f"  {target_key}: using local collision USD, skip visual attach")
+            continue
         usd_abs = f"{ISAAC_NUCLEUS_DIR}/{info['usd_relative']}"
         visual_path = f"/World/{target_key.capitalize()}/Visuals"
         result, _ = _client.stat(usd_abs)

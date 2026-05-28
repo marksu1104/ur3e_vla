@@ -12,3 +12,5 @@ models/
 venv/
 
 *.log
+
+backups/
