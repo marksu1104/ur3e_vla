@@ -142,10 +142,10 @@ class PoseTrajectoryPlayer:
             self.segments.append((
                 t0,
                 t0 + duration,
-                torch.tensor(prev[1], device=device),
-                torch.tensor(pos, device=device),
-                torch.tensor(prev[2], device=device),
-                torch.tensor(quat, device=device),
+                torch.tensor(prev[1], device=device, dtype=torch.float32),
+                torch.tensor(pos, device=device, dtype=torch.float32),
+                torch.tensor(prev[2], device=device, dtype=torch.float32),
+                torch.tensor(quat, device=device, dtype=torch.float32),
                 float(prev[3]),
                 float(grip),
             ))
@@ -161,7 +161,10 @@ class PoseTrajectoryPlayer:
             if start <= t < end:
                 alpha = (t - start) / (end - start)
                 pos = p0 + alpha * (p1 - p0)
-                quat = q0 + alpha * (q1 - q0)
+                q1_short = q1
+                if torch.dot(q0, q1_short) < 0.0:
+                    q1_short = -q1_short
+                quat = q0 + alpha * (q1_short - q0)
                 quat = quat / torch.linalg.norm(quat)
                 grip = g0 + alpha * (g1 - g0)
                 return pos, quat, grip, False

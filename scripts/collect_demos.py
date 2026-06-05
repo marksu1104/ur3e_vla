@@ -12,7 +12,7 @@ if str(PROJECT_ROOT) not in sys.path:
 _extra = argparse.ArgumentParser(add_help=False, allow_abbrev=False)
 _extra.add_argument("--episodes", type=int, default=5,
                     help="Number of successful episodes to collect.")
-_extra.add_argument("--output-dir", type=str, default="outputs/data",
+_extra.add_argument("--output-dir", type=str, default="outputs/test/h5",
                     help="Base output directory relative to this project.")
 _extra.add_argument("--max-episodes-tried", type=int, default=0,
                     help="Maximum attempts. Use 0 for an automatic limit.")
@@ -86,188 +86,19 @@ from vla_sim.scene import (
 )
 from vla_sim.actions import PoseTrajectoryPlayer, compute_action_from_ee_poses
 from vla_sim.data_collector import EpisodeBuffer, append_episode_h5
+from vla_sim.demo_planning import (
+    randomize_lighting,
+    randomize_target_pose,
+    sample_grasp_parameters,
+    sample_grasp_quat,
+    sample_scene_object_poses,
+    detect_success,
+)
 
 
 random.seed(_extra_args.seed)
 np.random.seed(_extra_args.seed)
 
-
-def quat_mul(q1, q2):
-    """Hamilton product for quaternions in IsaacLab wxyz order."""
-    w1, x1, y1, z1 = q1
-    w2, x2, y2, z2 = q2
-    return (
-        w1 * w2 - x1 * x2 - y1 * y2 - z1 * z2,
-        w1 * x2 + x1 * w2 + y1 * z2 - z1 * y2,
-        w1 * y2 - x1 * z2 + y1 * w2 + z1 * x2,
-        w1 * z2 + x1 * y2 - y1 * x2 + z1 * w2,
-    )
-
-
-
-def yaw_from_quat_wxyz(q) -> float:
-    """Return world-Z yaw from a wxyz quaternion."""
-    w, x, y, z = q
-    siny_cosp = 2.0 * (w * z + x * y)
-    cosy_cosp = 1.0 - 2.0 * (y * y + z * z)
-    return float(np.arctan2(siny_cosp, cosy_cosp))
-
-
-def sample_grasp_quat(target_info: dict, spawn_rot: tuple, rng: np.random.Generator) -> tuple:
-    """Sample gripper yaw while avoiding the mug handle direction."""
-    if not target_info.get("align_gripper_to_yaw"):
-        return EE_ORIENT_DOWN
-
-    object_yaw = yaw_from_quat_wxyz(spawn_rot)
-    offsets = target_info.get("grasp_yaw_offsets", (-np.pi / 2.0, np.pi / 2.0))
-    offset = float(rng.choice(np.asarray(offsets, dtype=np.float32)))
-    jitter_range = target_info.get("grasp_yaw_jitter", (-0.20, 0.20))
-    jitter = float(rng.uniform(*jitter_range))
-    grasp_yaw = object_yaw + offset + jitter + float(target_info.get("gripper_yaw_offset", 0.0))
-    yaw_quat = (np.cos(grasp_yaw / 2.0), 0.0, 0.0, np.sin(grasp_yaw / 2.0))
-    return quat_mul(yaw_quat, EE_ORIENT_DOWN)
-
-
-def randomize_target_pose(target_info: dict, rng: np.random.Generator) -> tuple:
-    """Return randomized target position and orientation."""
-    base_x, base_y, base_z = target_info["spawn_pos"]
-    base_rot = target_info.get("spawn_rot", (1.0, 0.0, 0.0, 0.0))
-
-    if _extra_args.randomize_pos:
-        pos_randomization = target_info.get("pos_randomization", {})
-        x_range = pos_randomization.get("x", (-0.08, 0.08))
-        y_range = pos_randomization.get("y", (-0.10, 0.10))
-        rand_x = base_x + rng.uniform(*x_range)
-        rand_y = base_y + rng.uniform(*y_range)
-    else:
-        rand_x, rand_y = base_x, base_y
-
-    if _extra_args.randomize_rot:
-        yaw = rng.uniform(-np.pi, np.pi)
-        # Yaw quaternion around the world Z axis.
-        yaw_rot = (np.cos(yaw/2), 0.0, 0.0, np.sin(yaw/2))
-        spawn_rot = quat_mul(yaw_rot, base_rot)
-    else:
-        spawn_rot = base_rot
-
-    return (rand_x, rand_y, base_z), spawn_rot
-
-
-MUG_TARGET_KEYS = ("red_mug", "blue_mug")
-MIN_OBJECT_XY_DIST = 0.12
-MIN_PLACE_XY_DIST = 0.12
-
-
-def _xy_dist(a: tuple, b: tuple) -> float:
-    return float(np.linalg.norm(np.asarray(a[:2]) - np.asarray(b[:2])))
-
-
-def sample_scene_object_poses(targets: dict, rng: np.random.Generator) -> dict:
-    """Sample per-episode mug poses while avoiding overlaps and the place point."""
-    sampled: dict[str, tuple[tuple, tuple]] = {}
-    for key in MUG_TARGET_KEYS:
-        if key not in targets:
-            continue
-        info = targets[key]
-        for _ in range(100):
-            pos, rot = randomize_target_pose(info, rng)
-            if _xy_dist(pos, HOME_POS) < MIN_PLACE_XY_DIST:
-                continue
-            if any(_xy_dist(pos, other_pos) < MIN_OBJECT_XY_DIST for other_pos, _ in sampled.values()):
-                continue
-            sampled[key] = (pos, rot)
-            break
-        else:
-            base_pos = info["spawn_pos"]
-            base_rot = info.get("spawn_rot", (1.0, 0.0, 0.0, 0.0))
-            sampled[key] = (base_pos, base_rot)
-            log(f"  WARNING: using base pose for {key}; could not sample non-overlapping pose")
-    return sampled
-
-
-def randomize_lighting(stage, rng: np.random.Generator):
-    """Randomize dome light intensity and color."""
-    if not _extra_args.randomize_light:
-        return
-    try:
-        from pxr import UsdLux
-        light_prim = stage.GetPrimAtPath("/World/light")
-        if not light_prim.IsValid():
-            return
-        light = UsdLux.DomeLight(light_prim)
-        intensity = 3000.0 * rng.uniform(0.7, 1.3)
-        light.GetIntensityAttr().Set(float(intensity))
-        if rng.random() < 0.5:
-            color = (1.0, 0.95, 0.85)
-        else:
-            color = (0.85, 0.95, 1.0)
-        light.GetColorAttr().Set(color)
-    except Exception as e:
-        log(f"randomize_lighting failed: {e}")
-
-
-def detect_success(
-    target_obj,
-    ee_pos: np.ndarray,
-    target_initial_z: float,
-    gripper_q: float,
-    place_pos: tuple,
-    best_lift_height: float,
-    place_xy_threshold: float = 0.10,
-) -> tuple[bool, dict]:
-    """Check whether the object was lifted and delivered to the target place."""
-    obj_pos = target_obj.data.root_pos_w[0].cpu().numpy()
-    place_pos_np = np.asarray(place_pos, dtype=np.float32)
-
-    obj_lift_height = float(obj_pos[2] - target_initial_z)
-    obj_place_xy_dist = float(np.linalg.norm(obj_pos[:2] - place_pos_np[:2]))
-    obj_lifted = best_lift_height > 0.04
-    obj_at_place = obj_place_xy_dist < place_xy_threshold
-    ee_safe = bool((1.05 < ee_pos[2] < 1.7) and (-0.5 < ee_pos[0] < 0.7))
-    gripper_closed = gripper_q > 0.3
-    obj_near_ee = bool(np.linalg.norm(obj_pos - ee_pos) < 0.25)
-
-    success = obj_lifted and obj_at_place and ee_safe
-    return success, {
-        "obj_lifted": bool(obj_lifted),
-        "obj_at_place": bool(obj_at_place),
-        "gripper_closed": bool(gripper_closed),
-        "ee_safe": ee_safe,
-        "obj_near_ee": obj_near_ee,
-        "obj_pos_final": obj_pos.tolist(),
-        "ee_pos_final": ee_pos.tolist(),
-        "obj_lift_height": obj_lift_height,
-        "best_lift_height": float(best_lift_height),
-        "obj_place_xy_dist": obj_place_xy_dist,
-        "place_pos": place_pos_np.tolist(),
-        "place_xy_threshold": float(place_xy_threshold),
-    }
-
-
-def detect_target_reached(
-    ee_pos: np.ndarray,
-    target_pos: tuple,
-    target_initial_z: float,
-    threshold: float = 0.08,
-) -> tuple[bool, dict]:
-    """Check whether the end effector reached the scripted target point."""
-    target_pos_np = np.asarray(target_pos, dtype=np.float32)
-    ee_target_dist = float(np.linalg.norm(ee_pos - target_pos_np))
-    target_reached = bool(ee_target_dist < threshold)
-    ee_safe = bool((1.05 < ee_pos[2] < 1.7) and (-0.5 < ee_pos[0] < 0.7))
-
-    return target_reached, {
-        "target_reached": target_reached,
-        "ee_target_dist": ee_target_dist,
-        "target_pos": target_pos_np.tolist(),
-        "ee_pos_final": ee_pos.tolist(),
-        "obj_lifted": False,
-        "gripper_closed": True,
-        "ee_safe": ee_safe,
-        "obj_near_ee": False,
-        "obj_lift_height": 0.0,
-        "target_initial_z": float(target_initial_z),
-    }
 
 
 def run_one_episode(
@@ -285,9 +116,21 @@ def run_one_episode(
     """Run one scripted episode and return success, data, and diagnostics."""
     device = str(sim.device)
 
-    scene_object_poses = sample_scene_object_poses(TARGETS, rng)
+    scene_object_poses = sample_scene_object_poses(
+        TARGETS,
+        rng,
+        randomize_pos=_extra_args.randomize_pos,
+        randomize_rot=_extra_args.randomize_rot,
+        place_pos=HOME_POS,
+        log_fn=log,
+    )
     if target_name not in scene_object_poses:
-        scene_object_poses[target_name] = randomize_target_pose(target_info, rng)
+        scene_object_poses[target_name] = randomize_target_pose(
+            target_info,
+            rng,
+            randomize_pos=_extra_args.randomize_pos,
+            randomize_rot=_extra_args.randomize_rot,
+        )
 
     for object_name, (object_pos, object_rot) in scene_object_poses.items():
         try:
@@ -315,7 +158,7 @@ def run_one_episode(
     robot.set_joint_position_target(open_cmd, joint_ids=finger_ids_t)
 
     stage = omni.usd.get_context().get_stage()
-    randomize_lighting(stage, rng)
+    randomize_lighting(stage, rng, enabled=_extra_args.randomize_light, log_fn=log)
 
     for _ in range(60):
         robot.set_joint_position_target(home_q_t, joint_ids=arm_ids_t)
@@ -327,19 +170,31 @@ def run_one_episode(
     target_resting = target_obj.data.root_pos_w[0].cpu().numpy()
     target_initial_z = float(target_resting[2])
     tx, ty, tz = target_resting.tolist()
-    hover_z = tz + target_info["hover_z"]
-    grasp_z = tz + target_info["grasp_z"]
+    grasp_params = sample_grasp_parameters(target_info, rng)
+    gx = tx + grasp_params["x_nudge"]
+    gy = ty + grasp_params["y_nudge"]
+    hover_z = tz + grasp_params["hover_z"]
+    grasp_z = tz + grasp_params["grasp_z"]
 
-    HOVER_POS = (tx, ty + target_info["y_nudge"], hover_z)
-    GRASP_POS = (tx, ty + target_info["y_nudge"], grasp_z)
+    HOVER_POS = (gx, gy, hover_z)
+    PRE_GRASP_POS = (gx, gy, min(grasp_z + 0.055, hover_z))
+    GRASP_POS = (gx, gy, grasp_z)
+    LIFT_START_POS = (gx, gy, min(grasp_z + 0.025, hover_z))
     grasp_quat = sample_grasp_quat(target_info, spawn_rot, rng)
 
     trajectory = [
         (0.0, HOME_POS,  EE_ORIENT_DOWN, GRIPPER_OPEN),
-        (4.0, HOVER_POS, grasp_quat, GRIPPER_OPEN),
-        (3.0, GRASP_POS, grasp_quat, GRIPPER_OPEN),
-        (2.0, GRASP_POS, grasp_quat, GRIPPER_CLOSE),
-        (3.0, HOVER_POS, grasp_quat, GRIPPER_CLOSE),
+        # Stage the demonstration so each segment has one main intent:
+        # move to hover, yaw-align, descend, close, lift, carry, release.
+        (3.5, HOVER_POS, EE_ORIENT_DOWN, GRIPPER_OPEN),
+        (0.8, HOVER_POS, grasp_quat, GRIPPER_OPEN),
+        (2.2, PRE_GRASP_POS, grasp_quat, GRIPPER_OPEN),
+        (1.2, GRASP_POS, grasp_quat, GRIPPER_OPEN),
+        # Close briefly while stationary for a more stable physical grasp, then
+        # lift immediately to avoid teaching a long no-op at the grasp pose.
+        (0.6, GRASP_POS, grasp_quat, GRIPPER_CLOSE),
+        (0.6, LIFT_START_POS, grasp_quat, GRIPPER_CLOSE),
+        (2.4, HOVER_POS, grasp_quat, GRIPPER_CLOSE),
         (3.0, HOME_POS,  grasp_quat, GRIPPER_CLOSE),
         (2.0, HOME_POS,  EE_ORIENT_DOWN, GRIPPER_OPEN),
     ]
@@ -473,6 +328,7 @@ def run_one_episode(
     diag["num_steps_recorded"]  = len(buffer.main_images)
     diag["spawn_pos"]           = list(map(float, spawn_pos))
     diag["spawn_rot"]           = list(map(float, spawn_rot))
+    diag["grasp_params"]        = {k: float(v) for k, v in grasp_params.items()}
     diag["grasp_quat"]          = list(map(float, grasp_quat))
     diag["scene_object_poses"]  = {
         name: {

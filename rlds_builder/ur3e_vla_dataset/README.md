@@ -5,7 +5,7 @@ This TFDS builder converts UR3e VLA HDF5 demonstrations into RLDS episodes.
 Default input:
 
 ```text
-../../outputs/data/mug/demos.h5
+../../outputs/h5/mugs_500/red_mug/demos.h5
 ```
 
 Override the input file with:
@@ -17,7 +17,7 @@ export UR3E_VLA_H5_PATH=/path/to/demos.h5
 Use multiple HDF5 files for multitask training with a comma-separated list:
 
 ```bash
-export UR3E_VLA_H5_PATHS="/path/to/red_mug/demos.h5,/path/to/blue_mug/demos.h5"
+export UR3E_VLA_H5_PATHS="../../outputs/h5/mugs_500/red_mug/demos.h5,../../outputs/h5/mugs_500/blue_mug/demos.h5"
 ```
 
 `UR3E_VLA_H5_PATHS` takes precedence over `UR3E_VLA_H5_PATH`.

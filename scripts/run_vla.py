@@ -24,9 +24,15 @@ _extra.add_argument(
     help="Scale applied to VLA delta actions.",
 )
 _extra.add_argument(
+    "--vla-timeout",
+    type=float,
+    default=10.0,
+    help="HTTP timeout for one VLA prediction request.",
+)
+_extra.add_argument(
     "--max-steps",
     type=int,
-    default=600,
+    default=6000,
     help="Maximum simulation steps. Use 0 to run until interrupted.",
 )
 _extra.add_argument(
@@ -94,6 +100,7 @@ def main():
     vla_server = _extra_args.vla_server
     step_interval = _extra_args.vla_step_interval
     action_scale = _extra_args.action_scale
+    vla_timeout = _extra_args.vla_timeout
     max_steps = _extra_args.max_steps
     camera_name = _extra_args.camera
     unnorm_key = _extra_args.unnorm_key
@@ -105,11 +112,12 @@ def main():
     log(f"VLA call every {step_interval} sim steps "
         f"(= {60/step_interval:.1f} Hz at 60Hz sim)")
     log(f"Action scale: {action_scale}")
+    log(f"VLA timeout: {vla_timeout}s")
     log(f"VLA camera: {camera_name}")
     log(f"Unnorm key: {unnorm_key}")
     log(f"Lock orientation: {lock_orientation}")
 
-    vla = VLAClient(vla_server)
+    vla = VLAClient(vla_server, timeout=vla_timeout)
     log("[VLA] Checking server health...")
     if not vla.health_check(log):
         log("[VLA] WARNING: server is not ready. VLA calls will reuse the last action.")
@@ -269,6 +277,7 @@ def main():
     ee_target_pos = ee_pose_w[0, :3].clone()
     ee_target_quat = ee_pose_w[0, 3:7].clone()
     gripper_target = GRIPPER_OPEN
+    gripper_latched_closed = False
 
     log("Entering main loop. Ctrl+C to stop.")
     step = 0
@@ -276,6 +285,7 @@ def main():
     last_vla_action = np.zeros(7, dtype=np.float32)
     last_action_id = 0
     applied_action_id = 0
+    vla_pending = False
     action_lock = threading.Lock()
 
     try:
@@ -286,14 +296,26 @@ def main():
                     rgb_np = cam_data[0].cpu().numpy().astype(np.uint8)
 
                     def _async_predict():
-                        nonlocal last_vla_action, last_action_id
-                        action = clamp_action(vla.predict(rgb_np, instruction, unnorm_key=unnorm_key, log=log))
-                        with action_lock:
-                            last_vla_action = action
-                            last_action_id += 1
+                        nonlocal last_vla_action, last_action_id, vla_pending
+                        try:
+                            action = clamp_action(
+                                vla.predict(rgb_np, instruction, unnorm_key=unnorm_key, log=log)
+                            )
+                            with action_lock:
+                                last_vla_action = action
+                                last_action_id += 1
+                        finally:
+                            with action_lock:
+                                vla_pending = False
 
-                    t = threading.Thread(target=_async_predict, daemon=True)
-                    t.start()
+                    should_start = False
+                    with action_lock:
+                        if not vla_pending:
+                            vla_pending = True
+                            should_start = True
+                    if should_start:
+                        t = threading.Thread(target=_async_predict, daemon=True)
+                        t.start()
 
             # Apply each predicted action once. Re-applying a stale action can
             # push the IK target out of distribution while async inference is slow.
@@ -312,7 +334,14 @@ def main():
                 ee_target_pos = new_pos
                 if not lock_orientation:
                     ee_target_quat = new_quat
-                gripper_target = new_grip
+                if new_grip > 0.75:
+                    gripper_latched_closed = True
+                elif (not gripper_latched_closed) and new_grip < 0.25:
+                    gripper_target = GRIPPER_OPEN
+                if gripper_latched_closed:
+                    gripper_target = 1.0
+                else:
+                    gripper_target = new_grip
                 log(f"[VLA] apply action#{applied_action_id}: {action_to_apply.round(4).tolist()}")
 
             root_pos = robot.data.root_state_w[:, :3]
@@ -331,8 +360,11 @@ def main():
             q_target = ik.compute(ee_pos_b, ee_quat_b, jac, q_current)
             robot.set_joint_position_target(q_target, joint_ids=arm_ids_t)
 
-            GRIP_SMOOTH = 0.08
-            raw_grip_binary = 1.0 if gripper_target > 0.7 else 0.0
+            GRIP_SMOOTH = 0.12
+            if gripper_latched_closed:
+                raw_grip_binary = 1.0
+            else:
+                raw_grip_binary = 1.0 if gripper_target > 0.75 else 0.0
             gripper_target = gripper_target + GRIP_SMOOTH * (raw_grip_binary - gripper_target)
             grip_scaled = gripper_target * (GRIPPER_CLOSE - GRIPPER_OPEN) + GRIPPER_OPEN
             finger_cmd = torch.clamp(
@@ -350,9 +382,13 @@ def main():
                 ee_now = ee_pose_w[0, :3].cpu().numpy().round(3).tolist()
                 tgt_now = ee_target_pos.cpu().numpy().round(3).tolist()
                 obj = scene[target_name].data.root_pos_w[0].cpu().numpy().round(3).tolist()
+                with action_lock:
+                    pending_now = vla_pending
+                    action_now = last_action_id
                 log(f"step={step} ee={ee_now} tgt={tgt_now} "
-                    f"grip={gripper_target:.2f} {target_name}={obj} "
-                    f"vla_req={vla.stats['requests']} err={vla.stats['errors']}")
+                    f"grip={gripper_target:.2f} latched={gripper_latched_closed} {target_name}={obj} "
+                    f"vla_req={vla.stats['requests']} err={vla.stats['errors']} "
+                    f"pending={pending_now} action={applied_action_id}/{action_now}")
                 last_log_t = now
 
             step += 1
