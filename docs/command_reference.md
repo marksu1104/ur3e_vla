@@ -82,6 +82,35 @@ Useful collect variations:
 --seed 123
 ```
 
+## Capture YOLO Object Views
+
+Capture static RGB images for AR/YOLO checks using the `collect_demos.py` scene
+setup without running the grasp trajectory. The script keeps the robot at the
+collect-demo home pose, replaces the red mug with a capture-only bowl, pins the
+banana pose, and saves 2K `camera_main` PNGs. Edit the capture-only constants in
+`scripts/capture_yolo_objects.py` to tune object and camera placement.
+
+```bash
+cd ~/ros2_jazzy_ws
+source /opt/ros/jazzy/setup.bash
+source ~/ros2_jazzy_ws/install/setup.bash
+conda activate env_isaaclab_ros2
+cd ~/IsaacLab
+
+./isaaclab.sh -p ./ur3e_vla/scripts/capture_yolo_objects.py \
+  --num-images 12 \
+  --output-dir ~/IsaacLab/ur3e_vla/outputs/test/yolo_object_views \
+  --enable_cameras
+```
+
+Useful capture variations:
+
+```bash
+--show-gui
+--render-steps 90
+--seed 123
+```
+
 ## Create 100-Demo Subset
 
 Raw commands:
