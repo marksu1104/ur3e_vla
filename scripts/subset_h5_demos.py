@@ -22,7 +22,14 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--input", required=True, type=Path, help="Source demos.h5")
     parser.add_argument("--output", required=True, type=Path, help="Output demos.h5")
-    parser.add_argument("--episodes", required=True, type=int, help="Number of demos to copy")
+    parser.add_argument(
+        "--episodes",
+        "--num-demos",
+        dest="episodes",
+        required=True,
+        type=int,
+        help="Number of demos to copy.",
+    )
     parser.add_argument(
         "--seed",
         type=int,

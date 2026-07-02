@@ -1,5 +1,6 @@
 """Isaac Lab scene configuration and asset assembly helpers."""
 
+import os
 import omni.usd
 import omni.kit.app
 
@@ -298,7 +299,8 @@ class SceneCfg(InteractiveSceneCfg):
     camera_main = CameraCfg(
         prim_path="/World/CameraMain",
         update_period=0.0,
-        height=CAMERA_HEIGHT, width=CAMERA_WIDTH,
+        height=int(os.environ.get("VLA_CAMERA_MAIN_HEIGHT", CAMERA_HEIGHT)),
+        width=int(os.environ.get("VLA_CAMERA_MAIN_WIDTH", CAMERA_WIDTH)),
         data_types=["rgb"],
         spawn=sim_utils.PinholeCameraCfg(focal_length=CAMERA_MAIN_FOCAL),
         offset=CameraCfg.OffsetCfg(

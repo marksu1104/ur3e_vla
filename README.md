@@ -29,6 +29,7 @@ scripts/
   real_vla_servo.py       Send real-camera VLA twist commands through MoveIt Servo.
   subset_h5_demos.py      Create smaller H5 subsets.
   vla_server.py           Serve OpenVLA inference over HTTP.
+  multi_env/              Experimental multi-env collection and assembled-USD tools.
 
 docs/
   project_layout.md             Artifact/storage policy.
@@ -42,6 +43,7 @@ vla_sim/
   demo_planning.py        Scene randomization, grasp planning, and success checks.
   data_collector.py       Episode buffers and H5 export.
   vla_client.py           Lightweight VLA HTTP client.
+  video.py                MP4 recording helper for trajectory previews.
 ```
 
 Generated data, TFDS builds, media, and model exports stay under `outputs/`,
@@ -86,6 +88,38 @@ Collect blue mug:
   --overwrite \
   --enable_cameras
 ```
+
+### Preview Trajectory Video Without Saving H5
+
+Use this when you only want to inspect the scripted trajectory. `--no-save-h5`
+prevents writing `demos.h5`; `--record-video` temporarily raises `camera_main`
+to 2K for the MP4 only. Normal dataset collection still uses the configured H5
+camera resolution.
+
+```bash
+cd ~/ros2_jazzy_ws
+source /opt/ros/jazzy/setup.bash
+source ~/ros2_jazzy_ws/install/setup.bash
+conda activate env_isaaclab_ros2
+cd ~/IsaacLab
+
+./isaaclab.sh -p ./ur3e_vla/scripts/collect_demos.py \
+  --target red_mug \
+  --episodes 1 \
+  --max-episodes-tried 3 \
+  --output-dir ~/IsaacLab/ur3e_vla/outputs/test/trajectory_preview \
+  --no-save-h5 \
+  --record-video \
+  --video-path ~/IsaacLab/ur3e_vla/outputs/test/videos/red_mug_trajectory.mp4 \
+  --video-camera camera_main \
+  --video-width 2560 \
+  --video-height 1440 \
+  --video-fps 60 \
+  --video-every-n-steps 1 \
+  --enable_cameras
+```
+
+For blue mug, change `--target blue_mug` and use a blue-mug video filename.
 
 ### 2. Create 100-Demo Subsets
 

@@ -74,7 +74,7 @@ HOME_Q = [0.57, -1.57, 1.57, -1.57, -1.57, 0.00]
 # End-effector workspace clamp (x, y, z).
 WORKSPACE_X = (-0.4, 0.7)
 WORKSPACE_Y = (-0.5, 0.5)
-WORKSPACE_Z = (1.05, 1.65)
+WORKSPACE_Z = (1.05, 1.48)
 
 
 # Orbit camera trajectory used by optional debug captures.
@@ -85,6 +85,15 @@ ORBIT_HEIGHT = 1.55
 CAMERA_MAIN_POS = (0.6, 0.6, 1.5)
 CAMERA_MAIN_ROT = (0.28, 0.13, 0.43, 0.85)
 CAMERA_MAIN_FOCAL = 11.0
+
+# Small discrete view set for dataset collection. The first entry matches the
+# standard camera used by run_vla; collect_demos can sample these per episode.
+CAMERA_MAIN_VIEW_PRESETS = (
+    {"name": "standard", "pos": CAMERA_MAIN_POS, "rot": CAMERA_MAIN_ROT},
+    {"name": "left", "pos": (0.54, 0.66, 1.50), "rot": (0.29, 0.12, 0.39, 0.87)},
+    {"name": "right", "pos": (0.66, 0.54, 1.50), "rot": (0.27, 0.15, 0.47, 0.83)},
+    {"name": "high", "pos": (0.58, 0.58, 1.60), "rot": (0.34, 0.15, 0.42, 0.83)},
+)
 
 # YCB target objects.
 TARGETS = {

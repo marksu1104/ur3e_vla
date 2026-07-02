@@ -295,3 +295,32 @@ ros2 param get /servo_node moveit_servo.command_out_type
 ros2 topic echo /forward_velocity_controller/commands --once
 ros2 run tf2_ros tf2_echo base_link tool0
 ```
+
+
+## Preview Scripted Trajectory Video
+
+Run one scripted episode, record a 2K `camera_main` MP4, and skip H5 writing.
+This is for visual inspection only.
+
+```bash
+cd ~/ros2_jazzy_ws
+source /opt/ros/jazzy/setup.bash
+source ~/ros2_jazzy_ws/install/setup.bash
+conda activate env_isaaclab_ros2
+cd ~/IsaacLab
+
+./isaaclab.sh -p ./ur3e_vla/scripts/collect_demos.py \
+  --target red_mug \
+  --episodes 1 \
+  --max-episodes-tried 3 \
+  --output-dir ~/IsaacLab/ur3e_vla/outputs/test/trajectory_preview \
+  --no-save-h5 \
+  --record-video \
+  --video-path ~/IsaacLab/ur3e_vla/outputs/test/videos/red_mug_trajectory_2k.mp4 \
+  --video-camera camera_main \
+  --video-width 2560 \
+  --video-height 1440 \
+  --video-fps 30 \
+  --video-every-n-steps 2 \
+  --enable_cameras
+```

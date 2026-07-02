@@ -22,6 +22,8 @@ _extra.add_argument("--randomize-rot", action=argparse.BooleanOptionalAction, de
                     help="Randomize target yaw while preserving base orientation.")
 _extra.add_argument("--randomize-light", action=argparse.BooleanOptionalAction, default=True,
                     help="Randomize dome light intensity and color.")
+_extra.add_argument("--randomize-camera-view", action=argparse.BooleanOptionalAction, default=True,
+                    help="Randomly choose a small camera_main view preset per episode.")
 _extra.add_argument("--keep-sim-alive", action=argparse.BooleanOptionalAction, default=False,
                     help="Keep simulation open after collection.")
 _extra.add_argument("--show-gui", action="store_true",
@@ -32,7 +34,57 @@ _extra.add_argument(
     action="store_true",
     help="Remove the existing target demos.h5 before collecting new episodes.",
 )
+_extra.add_argument(
+    "--no-save-h5",
+    action="store_true",
+    help="Run episodes without writing demos.h5. Useful for trajectory inspection.",
+)
+_extra.add_argument(
+    "--record-video",
+    action="store_true",
+    help="Record camera_main frames to an MP4 while running episodes.",
+)
+_extra.add_argument(
+    "--video-path",
+    type=str,
+    default="",
+    help="Output MP4 path. Defaults to <output-dir>/<target>/trajectory.mp4.",
+)
+_extra.add_argument(
+    "--video-camera",
+    choices=("camera_main", "camera_wrist"),
+    default="camera_main",
+    help="Camera used for MP4 recording.",
+)
+_extra.add_argument(
+    "--video-fps",
+    type=float,
+    default=30.0,
+    help="Output MP4 frame rate.",
+)
+_extra.add_argument(
+    "--video-width",
+    type=int,
+    default=2560,
+    help="Camera width used only for --record-video runs.",
+)
+_extra.add_argument(
+    "--video-height",
+    type=int,
+    default=1440,
+    help="Camera height used only for --record-video runs.",
+)
+_extra.add_argument(
+    "--video-every-n-steps",
+    type=int,
+    default=2,
+    help="Write one video frame every N sim steps. At 60 Hz, N=2 gives 30 FPS.",
+)
 _extra_args, _ = _extra.parse_known_args()
+
+if _extra_args.record_video:
+    os.environ["VLA_CAMERA_MAIN_WIDTH"] = str(_extra_args.video_width)
+    os.environ["VLA_CAMERA_MAIN_HEIGHT"] = str(_extra_args.video_height)
 
 if not _extra_args.show_gui and "--headless" not in sys.argv:
     sys.argv.append("--headless")
@@ -74,7 +126,7 @@ from vla_sim.config import (
     EE_BODY_NAME, EE_ORIENT_DOWN,
     GRIPPER_OPEN, GRIPPER_CLOSE,
     HOME_POS, HOME_Q,
-    TARGETS,
+    TARGETS, CAMERA_MAIN_VIEW_PRESETS,
     GRIPPER_MIMIC_MAP,
 )
 from vla_sim.scene import (
@@ -94,11 +146,35 @@ from vla_sim.demo_planning import (
     sample_scene_object_poses,
     detect_success,
 )
+from vla_sim.video import VideoRecorder
 
 
 random.seed(_extra_args.seed)
 np.random.seed(_extra_args.seed)
 
+
+def apply_camera_main_view(stage, view: dict):
+    """Apply a discrete camera_main pose preset to the USD camera prim."""
+    try:
+        from pxr import Gf, UsdGeom
+
+        prim = stage.GetPrimAtPath("/World/CameraMain")
+        if not prim.IsValid():
+            return False
+
+        xform = UsdGeom.Xformable(prim)
+        xform.ClearXformOpOrder()
+        translate_op = xform.AddTranslateOp()
+        orient_op = xform.AddOrientOp(precision=UsdGeom.XformOp.PrecisionDouble)
+
+        pos = view["pos"]
+        rot = view["rot"]
+        translate_op.Set(Gf.Vec3d(float(pos[0]), float(pos[1]), float(pos[2])))
+        orient_op.Set(Gf.Quatd(float(rot[0]), Gf.Vec3d(float(rot[1]), float(rot[2]), float(rot[3]))))
+        return True
+    except Exception as exc:
+        log(f"  camera view randomization failed: {exc}")
+        return False
 
 
 def run_one_episode(
@@ -112,6 +188,9 @@ def run_one_episode(
     rng: np.random.Generator,
     instruction: str,
     record_every_n_steps: int = 12,    # 12 sim steps @ 60Hz = 5Hz logging
+    video_recorder: VideoRecorder | None = None,
+    video_camera: str = "camera_main",
+    video_every_n_steps: int = 2,
 ) -> tuple[bool, EpisodeBuffer | None, dict]:
     """Run one scripted episode and return success, data, and diagnostics."""
     device = str(sim.device)
@@ -160,6 +239,13 @@ def run_one_episode(
     stage = omni.usd.get_context().get_stage()
     randomize_lighting(stage, rng, enabled=_extra_args.randomize_light, log_fn=log)
 
+    if _extra_args.randomize_camera_view:
+        view_idx = int(rng.integers(0, len(CAMERA_MAIN_VIEW_PRESETS)))
+        camera_view = CAMERA_MAIN_VIEW_PRESETS[view_idx]
+    else:
+        camera_view = CAMERA_MAIN_VIEW_PRESETS[0]
+    apply_camera_main_view(stage, camera_view)
+
     for _ in range(60):
         robot.set_joint_position_target(home_q_t, joint_ids=arm_ids_t)
         robot.set_joint_position_target(open_cmd, joint_ids=finger_ids_t)
@@ -182,21 +268,34 @@ def run_one_episode(
     LIFT_START_POS = (gx, gy, min(grasp_z + 0.025, hover_z))
     grasp_quat = sample_grasp_quat(target_info, spawn_rot, rng)
 
+    # Add small timing variation so the policy cannot overfit to a fixed close
+    # step. The visual/robot state should determine when to close, not episode
+    # clock time. Keep close itself short, then immediately lift.
+    hover_dt = float(rng.uniform(3.2, 3.8))
+    yaw_dt = 0.0
+    pre_grasp_dt = float(rng.uniform(1.9, 2.4))
+    descend_dt = float(rng.uniform(1.0, 1.4))
+    close_dt = float(rng.uniform(0.35, 0.55))
+    lift_start_dt = float(rng.uniform(0.45, 0.70))
+    lift_dt = float(rng.uniform(2.1, 2.6))
+    carry_dt = float(rng.uniform(2.7, 3.3))
+    release_dt = float(rng.uniform(1.6, 2.1))
+
     trajectory = [
         (0.0, HOME_POS,  EE_ORIENT_DOWN, GRIPPER_OPEN),
-        # Stage the demonstration so each segment has one main intent:
-        # move to hover, yaw-align, descend, close, lift, carry, release.
-        (3.5, HOVER_POS, EE_ORIENT_DOWN, GRIPPER_OPEN),
-        (0.8, HOVER_POS, grasp_quat, GRIPPER_OPEN),
-        (2.2, PRE_GRASP_POS, grasp_quat, GRIPPER_OPEN),
-        (1.2, GRASP_POS, grasp_quat, GRIPPER_OPEN),
-        # Close briefly while stationary for a more stable physical grasp, then
-        # lift immediately to avoid teaching a long no-op at the grasp pose.
-        (0.6, GRASP_POS, grasp_quat, GRIPPER_CLOSE),
-        (0.6, LIFT_START_POS, grasp_quat, GRIPPER_CLOSE),
-        (2.4, HOVER_POS, grasp_quat, GRIPPER_CLOSE),
-        (3.0, HOME_POS,  grasp_quat, GRIPPER_CLOSE),
-        (2.0, HOME_POS,  EE_ORIENT_DOWN, GRIPPER_OPEN),
+        # Move toward the hover pose while yaw-aligning. A separate stationary
+        # yaw segment made larger datasets overfit to hovering/yawing instead
+        # of descending once aligned.
+        (hover_dt, HOVER_POS, grasp_quat, GRIPPER_OPEN),
+        (pre_grasp_dt, PRE_GRASP_POS, grasp_quat, GRIPPER_OPEN),
+        (descend_dt, GRASP_POS, grasp_quat, GRIPPER_OPEN),
+        # Close briefly while stationary for a stable grasp, then lift right
+        # away to make the close -> lift transition unambiguous.
+        (close_dt, GRASP_POS, grasp_quat, GRIPPER_CLOSE),
+        (lift_start_dt, LIFT_START_POS, grasp_quat, GRIPPER_CLOSE),
+        (lift_dt, HOVER_POS, grasp_quat, GRIPPER_CLOSE),
+        (carry_dt, HOME_POS,  grasp_quat, GRIPPER_CLOSE),
+        (release_dt, HOME_POS,  grasp_quat, GRIPPER_OPEN),
     ]
     player = PoseTrajectoryPlayer(trajectory, device=device)
 
@@ -261,6 +360,18 @@ def run_one_episode(
         sim.step()
         scene.update(sim_dt)
 
+        if video_recorder is not None and step % max(1, video_every_n_steps) == 0:
+            try:
+                video_rgb = (
+                    scene[video_camera].data.output["rgb"][0]
+                    .cpu()
+                    .numpy()
+                    .astype(np.uint8)
+                )
+                video_recorder.write_rgb(video_rgb)
+            except Exception as e:
+                log(f"  video frame failed: {e}")
+
         obj_pos_check = target_obj.data.root_pos_w[0].cpu().numpy()
         best_lift_height = max(best_lift_height, float(obj_pos_check[2] - target_initial_z))
 
@@ -270,17 +381,22 @@ def run_one_episode(
             ee_pos_now = ee_pose_now[:3]
             ee_quat_now = ee_pose_now[3:]  # [w, x, y, z]
             joint_now = robot.data.joint_pos[0, arm_ids_t].cpu().numpy()
-            grip_now = float(robot.data.joint_pos[0, finger_ids_t[0]].cpu().item())
+            # Store the commanded logical gripper state instead of a mimic
+            # joint position. The physical joint can lag or use a sign/range
+            # that does not map cleanly to open/closed, while the policy needs
+            # to know whether the scripted controller currently intends open or
+            # closed.
+            grip_binary = 1.0 if grip_target > ((GRIPPER_OPEN + GRIPPER_CLOSE) * 0.5) else 0.0
 
             # Compute action_7d from (prev -> current) EE pose
             if prev_ee_pos is None:
                 action_7d = np.zeros(7, dtype=np.float32)
-                action_7d[6] = 1.0 if grip_target > 0.2 else 0.0
+                action_7d[6] = grip_binary
             else:
                 action_7d = compute_action_from_ee_poses(
                     prev_ee_pos, prev_ee_quat,
                     ee_pos_now,  ee_quat_now,
-                    gripper_target=1.0 if grip_target > 0.2 else 0.0,
+                    gripper_target=grip_binary,
                 )
 
             try:
@@ -304,7 +420,7 @@ def run_one_episode(
                 float(ee_quat_now[2]), float(ee_quat_now[3]),
             ])
             buffer.joint_positions.append(joint_now.tolist())
-            buffer.gripper_states.append(grip_now)
+            buffer.gripper_states.append(grip_binary)
             buffer.actions_7d.append(action_7d.tolist())
             buffer.timestamps.append(t_sim)
 
@@ -330,6 +446,22 @@ def run_one_episode(
     diag["spawn_rot"]           = list(map(float, spawn_rot))
     diag["grasp_params"]        = {k: float(v) for k, v in grasp_params.items()}
     diag["grasp_quat"]          = list(map(float, grasp_quat))
+    diag["camera_main_view"]    = {
+        "name": camera_view.get("name", "unknown"),
+        "pos": list(map(float, camera_view["pos"])),
+        "rot": list(map(float, camera_view["rot"])),
+    }
+    diag["trajectory_durations"] = {
+        "hover": hover_dt,
+        "yaw": yaw_dt,
+        "pre_grasp": pre_grasp_dt,
+        "descend": descend_dt,
+        "close": close_dt,
+        "lift_start": lift_start_dt,
+        "lift": lift_dt,
+        "carry": carry_dt,
+        "release": release_dt,
+    }
     diag["scene_object_poses"]  = {
         name: {
             "pos": list(map(float, pose[0])),
@@ -352,7 +484,9 @@ def main():
         out_dir = out_dir / target_name
     out_dir.mkdir(parents=True, exist_ok=True)
     h5_path = out_dir / "demos.h5"
-    if _extra_args.overwrite and h5_path.exists():
+    if _extra_args.no_save_h5:
+        log("H5 saving       : disabled (--no-save-h5)")
+    elif _extra_args.overwrite and h5_path.exists():
         h5_path.unlink()
         log(f"Removed existing dataset: {h5_path}")
     elif h5_path.exists():
@@ -367,6 +501,17 @@ def main():
             f"(existing episodes: {existing_count}). Use --overwrite to start fresh."
         )
 
+    video_recorder = None
+    video_path = None
+    if _extra_args.record_video:
+        if _extra_args.video_path:
+            video_path = Path(_extra_args.video_path)
+            if not video_path.is_absolute():
+                video_path = PROJECT_ROOT / video_path
+        else:
+            video_path = out_dir / "trajectory.mp4"
+        video_recorder = VideoRecorder(video_path, fps=float(_extra_args.video_fps))
+
     n_target_episodes = _extra_args.episodes
     max_tried = _extra_args.max_episodes_tried or max(n_target_episodes * 3, n_target_episodes + 10)
 
@@ -376,9 +521,14 @@ def main():
     log(f"Max tried       : {max_tried}")
     log(f"argv            : {sys.argv}")
     log(f"Output dir      : {out_dir}")
+    if video_path is not None:
+        log(f"Video output    : {video_path}")
+        log(f"Video camera/fps: {_extra_args.video_camera} / {_extra_args.video_fps}")
+        log(f"Video resolution: {_extra_args.video_width}x{_extra_args.video_height}")
     log(f"Random seed     : {_extra_args.seed}")
     log(f"Randomize pos / rot / light: {_extra_args.randomize_pos} / "
         f"{_extra_args.randomize_rot} / {_extra_args.randomize_light}")
+    log(f"Randomize camera view: {_extra_args.randomize_camera_view}")
 
     rng = np.random.default_rng(_extra_args.seed)
 
@@ -484,6 +634,9 @@ def main():
                 ee_body_idx, ee_jac_idx,
                 target_name, target_info, target_obj,
                 rng, instruction,
+                video_recorder=video_recorder,
+                video_camera=_extra_args.video_camera,
+                video_every_n_steps=_extra_args.video_every_n_steps,
             )
         except Exception as e:
             log(f"  EXCEPTION: {e}")
@@ -505,12 +658,15 @@ def main():
                 "collection_time": time.strftime("%Y-%m-%d %H:%M:%S"),
                 "tried_index": n_tried,
             }
-            try:
-                append_episode_h5(h5_path, ep_id, buffer, meta)
-            except Exception as e:
-                log(f"  SAVE FAILED: {type(e).__name__}: {e}")
-                log(traceback.format_exc())
-                continue
+            if _extra_args.no_save_h5:
+                log("  SAVE SKIPPED (--no-save-h5)")
+            else:
+                try:
+                    append_episode_h5(h5_path, ep_id, buffer, meta)
+                except Exception as e:
+                    log(f"  SAVE FAILED: {type(e).__name__}: {e}")
+                    log(traceback.format_exc())
+                    continue
             n_success += 1
             log(f"  Progress: success={n_success}/{n_target_episodes}, "
                 f"tried={n_tried}/{max_tried}")
@@ -525,6 +681,9 @@ def main():
                 f"tried={n_tried}/{max_tried}")
 
     elapsed = time.monotonic() - t_start
+    if video_recorder is not None:
+        video_recorder.close()
+        log(f"Video saved: {video_recorder.path} ({video_recorder.frame_count} frames)")
     log("=" * 60)
     if n_success >= n_target_episodes:
         log("Stop reason: reached target successful episodes")

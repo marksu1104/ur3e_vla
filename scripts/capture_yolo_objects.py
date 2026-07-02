@@ -92,20 +92,28 @@ from vla_sim.scene import (
 np.random.seed(_extra_args.seed)
 
 # Capture-only object tweaks. Edit these values directly; config.py is untouched.
-BANANA_POS = (0.475, 0.30, 1.08)
-BANANA_ROT = TARGETS["banana"].get("spawn_rot", (1.0, 0.0, 0.0, 0.0))
+BANANA_POS = (0.67, 0.39, 1.08)
+BANANA_YAW_DEG = 0.0
+BANANA_ROT = (
+    math.cos(math.radians(BANANA_YAW_DEG) / 2.0),
+    0.0,
+    0.0,
+    math.sin(math.radians(BANANA_YAW_DEG) / 2.0),
+)
+BLUE_MUG_POS = (0.5, 0.39, 1.10)
+BLUE_MUG_ROT = TARGETS["blue_mug"].get("spawn_rot", (1.0, 0.0, 0.0, 0.0))
 
 REPLACE_RED_MUG_WITH_BOWL = True
 BOWL_PRIM_PATH = "/World/CaptureBowl"
 BOWL_USD_RELATIVE = f"{YCB_NUCLEUS_PATH}/024_bowl.usd"
-BOWL_POS = (0.125, 0.30, 1.105)
+BOWL_POS = (0.332, 0.39, 1.105)
 BOWL_ROT_X_DEG = -90.0
 BOWL_SCALE = (1.0, 1.0, 1.0)
 
 # Capture-only front camera. It looks from the +Y side toward the object row.
-CAPTURE_CAMERA_POS = (0.30, 0.66, 1.28)
-CAPTURE_CAMERA_TARGET = (0.30, 0.30, 1.13)
-CAPTURE_CAMERA_FOCAL = 14.0
+CAPTURE_CAMERA_POS = (0.5, 0.69, 1.30)
+CAPTURE_CAMERA_TARGET = (0.5, 0.30, 1.13)
+CAPTURE_CAMERA_FOCAL = 13.0
 CAPTURE_CAMERA_WIDTH = 2560
 CAPTURE_CAMERA_HEIGHT = 1440
 
@@ -292,6 +300,11 @@ def resolve_banana_pose():
     return tuple(float(v) for v in pos), BANANA_ROT
 
 
+def resolve_blue_mug_pose():
+    pos = np.asarray(BLUE_MUG_POS, dtype=np.float32)
+    return tuple(float(v) for v in pos), BLUE_MUG_ROT
+
+
 def write_object_pose(scene, name: str, pos, rot, device: str):
     obj = scene[name]
     state = torch.tensor(
@@ -317,12 +330,14 @@ def main():
     log(f"Output dir : {out_dir}")
     log(f"Num images : {_extra_args.num_images}")
     banana_pos, banana_rot = resolve_banana_pose()
+    blue_mug_pos, blue_mug_rot = resolve_blue_mug_pose()
 
     log(f"Seed       : {_extra_args.seed}")
     log("Setup      : collect_demos scene setup, no trajectory loop")
     log(f"Camera pos : {CAPTURE_CAMERA_POS}")
     log(f"Camera tgt : {CAPTURE_CAMERA_TARGET}")
     log(f"Banana pos : {banana_pos}")
+    log(f"Blue mug pos: {blue_mug_pos}")
 
     enable_extensions()
     log("Phase 1: spawn + Robot Assembler")
@@ -361,12 +376,14 @@ def main():
 
     hold_home = command_collect_demo_home(robot, device)
     write_object_pose(scene, "banana", banana_pos, banana_rot, device)
+    write_object_pose(scene, "blue_mug", blue_mug_pos, blue_mug_rot, device)
 
     captures = []
     for image_idx in range(_extra_args.num_images):
         for _ in range(max(1, _extra_args.render_steps)):
             hold_home()
             write_object_pose(scene, "banana", banana_pos, banana_rot, device)
+            write_object_pose(scene, "blue_mug", blue_mug_pos, blue_mug_rot, device)
             scene.write_data_to_sim()
             sim.step()
             scene.update(sim_dt)
@@ -385,6 +402,8 @@ def main():
                 "setup": "collect_demos_without_trajectory",
                 "banana_pos": list(banana_pos),
                 "banana_rot_wxyz": list(banana_rot),
+                "blue_mug_pos": list(blue_mug_pos),
+                "blue_mug_rot_wxyz": list(blue_mug_rot),
                 "replace_red_mug_with_bowl": bool(REPLACE_RED_MUG_WITH_BOWL),
                 "bowl_pos": list(BOWL_POS),
                 "bowl_rot_x_deg": float(BOWL_ROT_X_DEG),
