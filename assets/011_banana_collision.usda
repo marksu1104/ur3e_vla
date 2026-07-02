@@ -1,0 +1,28 @@
+#usda 1.0
+(
+    defaultPrim = "/World/Object"
+    metersPerUnit = 1
+    upAxis = "Z"
+)
+
+def "World"
+{
+    def Xform "Object" (
+        prepend apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsMassAPI", "PhysxRigidBodyAPI"]
+        prepend references = @https://omniverse-content-production.s3-us-west-2.amazonaws.com/Assets/Isaac/5.1/Isaac/Props/YCB/Axis_Aligned/011_banana.usd@
+    )
+    {
+        float physics:mass = 0.15
+        bool physxRigidBody:disableGravity = 0
+
+        over "_11_banana" (
+            prepend apiSchemas = ["PhysicsCollisionAPI", "PhysicsMeshCollisionAPI", "PhysxCollisionAPI"]
+        )
+        {
+            uniform token physics:approximation = "convexDecomposition"
+            float physxCollision:contactOffset = 0.002
+            float physxCollision:restOffset = 0
+        }
+    }
+}
+
