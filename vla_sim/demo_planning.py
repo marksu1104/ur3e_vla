@@ -6,7 +6,7 @@ from collections.abc import Callable
 
 import numpy as np
 
-from vla_sim.config import EE_ORIENT_DOWN, HOME_POS
+from vla_sim.config import EE_ORIENT_DOWN, GRIPPER_CLOSE, GRIPPER_OPEN, HOME_POS
 from vla_sim.geometry import angle_diff, quat_mul, yaw_from_quat_wxyz
 
 MUG_TARGET_KEYS = ("red_mug", "blue_mug")
@@ -119,6 +119,60 @@ def sample_grasp_parameters(target_info: dict, rng: np.random.Generator) -> dict
     return params
 
 
+def build_pick_place_trajectory(
+    target_info: dict,
+    target_resting: np.ndarray,
+    spawn_rot: tuple,
+    rng: np.random.Generator,
+    place_pos: tuple = HOME_POS,
+) -> tuple[list[tuple], dict]:
+    """Build the shared scripted mug trajectory and its episode metadata."""
+    tx, ty, tz = np.asarray(target_resting, dtype=np.float32).tolist()
+    grasp_params = sample_grasp_parameters(target_info, rng)
+    gx = tx + grasp_params["x_nudge"]
+    gy = ty + grasp_params["y_nudge"]
+    hover_z = tz + grasp_params["hover_z"]
+    grasp_z = tz + grasp_params["grasp_z"]
+
+    hover_pos = (gx, gy, hover_z)
+    pre_grasp_pos = (gx, gy, min(grasp_z + 0.055, hover_z))
+    grasp_pos = (gx, gy, grasp_z)
+    lift_start_pos = (gx, gy, min(grasp_z + 0.025, hover_z))
+    grasp_quat = sample_grasp_quat(target_info, spawn_rot, rng)
+
+    durations = {
+        "hover": float(rng.uniform(3.2, 3.8)),
+        "yaw": 0.0,
+        "pre_grasp": float(rng.uniform(1.9, 2.4)),
+        "descend": float(rng.uniform(1.0, 1.4)),
+        "close": float(rng.uniform(0.35, 0.55)),
+        "lift_start": float(rng.uniform(0.45, 0.70)),
+        "lift": float(rng.uniform(2.1, 2.6)),
+        "carry": float(rng.uniform(2.7, 3.3)),
+        "release": float(rng.uniform(1.6, 2.1)),
+    }
+    trajectory = [
+        (0.0, place_pos, EE_ORIENT_DOWN, GRIPPER_OPEN),
+        (durations["hover"], hover_pos, grasp_quat, GRIPPER_OPEN),
+        (durations["pre_grasp"], pre_grasp_pos, grasp_quat, GRIPPER_OPEN),
+        (durations["descend"], grasp_pos, grasp_quat, GRIPPER_OPEN),
+        (durations["close"], grasp_pos, grasp_quat, GRIPPER_CLOSE),
+        (durations["lift_start"], lift_start_pos, grasp_quat, GRIPPER_CLOSE),
+        (durations["lift"], hover_pos, grasp_quat, GRIPPER_CLOSE),
+        (durations["carry"], place_pos, grasp_quat, GRIPPER_CLOSE),
+        (durations["release"], place_pos, grasp_quat, GRIPPER_OPEN),
+    ]
+    metadata = {
+        "grasp_params": {key: float(value) for key, value in grasp_params.items()},
+        "grasp_quat": list(map(float, grasp_quat)),
+        "grasp_pos": list(map(float, grasp_pos)),
+        "hover_pos": list(map(float, hover_pos)),
+        "place_pos": list(map(float, place_pos)),
+        "durations": durations,
+    }
+    return trajectory, metadata
+
+
 def randomize_lighting(
     stage,
     rng: np.random.Generator,
@@ -154,14 +208,39 @@ def detect_success(
 ) -> tuple[bool, dict]:
     """Check whether the object was lifted and delivered to the target place."""
     obj_pos = target_obj.data.root_pos_w[0].cpu().numpy()
+    return evaluate_pick_place_success(
+        obj_pos,
+        ee_pos,
+        target_initial_z,
+        gripper_q,
+        place_pos,
+        best_lift_height,
+        place_xy_threshold=place_xy_threshold,
+    )
+
+
+def evaluate_pick_place_success(
+    obj_pos: np.ndarray,
+    ee_pos: np.ndarray,
+    target_initial_z: float,
+    gripper_q: float,
+    place_pos: tuple | np.ndarray,
+    best_lift_height: float,
+    place_xy_threshold: float = 0.10,
+    ee_pos_for_safety: np.ndarray | None = None,
+) -> tuple[bool, dict]:
+    """Evaluate pick-and-place success from plain position arrays."""
+    obj_pos = np.asarray(obj_pos, dtype=np.float32)
+    ee_pos = np.asarray(ee_pos, dtype=np.float32)
+    safety_pos = ee_pos if ee_pos_for_safety is None else np.asarray(ee_pos_for_safety)
     place_pos_np = np.asarray(place_pos, dtype=np.float32)
 
     obj_lift_height = float(obj_pos[2] - target_initial_z)
     obj_place_xy_dist = float(np.linalg.norm(obj_pos[:2] - place_pos_np[:2]))
     obj_lifted = best_lift_height > 0.04
     obj_at_place = obj_place_xy_dist < place_xy_threshold
-    ee_safe = bool((1.05 < ee_pos[2] < 1.7) and (-0.5 < ee_pos[0] < 0.7))
-    gripper_closed = gripper_q > 0.3
+    ee_safe = bool((1.05 < safety_pos[2] < 1.7) and (-0.5 < safety_pos[0] < 0.7))
+    gripper_closed = gripper_q > ((GRIPPER_OPEN + GRIPPER_CLOSE) * 0.5)
     obj_near_ee = bool(np.linalg.norm(obj_pos - ee_pos) < 0.25)
 
     success = obj_lifted and obj_at_place and ee_safe
@@ -178,30 +257,4 @@ def detect_success(
         "obj_place_xy_dist": obj_place_xy_dist,
         "place_pos": place_pos_np.tolist(),
         "place_xy_threshold": float(place_xy_threshold),
-    }
-
-
-def detect_target_reached(
-    ee_pos: np.ndarray,
-    target_pos: tuple,
-    target_initial_z: float,
-    threshold: float = 0.08,
-) -> tuple[bool, dict]:
-    """Check whether the end effector reached the scripted target point."""
-    target_pos_np = np.asarray(target_pos, dtype=np.float32)
-    ee_target_dist = float(np.linalg.norm(ee_pos - target_pos_np))
-    target_reached = bool(ee_target_dist < threshold)
-    ee_safe = bool((1.05 < ee_pos[2] < 1.7) and (-0.5 < ee_pos[0] < 0.7))
-
-    return target_reached, {
-        "target_reached": target_reached,
-        "ee_target_dist": ee_target_dist,
-        "target_pos": target_pos_np.tolist(),
-        "ee_pos_final": ee_pos.tolist(),
-        "obj_lifted": False,
-        "gripper_closed": True,
-        "ee_safe": ee_safe,
-        "obj_near_ee": False,
-        "obj_lift_height": 0.0,
-        "target_initial_z": float(target_initial_z),
     }

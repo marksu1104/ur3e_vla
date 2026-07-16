@@ -12,9 +12,6 @@ from isaaclab.sensors.camera import CameraCfg
 from isaaclab.utils import configclass
 from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR
 
-from isaaclab.sensors import FrameTransformerCfg
-from isaaclab.sensors.frame_transformer import OffsetCfg
-
 from vla_sim.isaac_app import log
 from vla_sim.config import (
     # USD paths
@@ -48,7 +45,6 @@ from vla_sim.config import (
     # Camera resolutions
     CAMERA_WIDTH, CAMERA_HEIGHT,
     WRIST_CAMERA_WIDTH, WRIST_CAMERA_HEIGHT,
-    ORBIT_CAMERA_WIDTH, ORBIT_CAMERA_HEIGHT,
     # Targets / gripper
     TARGETS,
     GRIPPER_MIMIC_MAP,
@@ -207,7 +203,7 @@ def make_table_cfg(prim_path: str, pos: tuple[float, float, float]) -> AssetBase
     )
 
 
-def make_target_cfg(name: str, info: dict) -> RigidObjectCfg:
+def make_target_cfg(name: str, info: dict, prim_path: str | None = None) -> RigidObjectCfg:
     """Create a target object from a collision USD or a cuboid proxy."""
     rigid_props = sim_utils.RigidBodyPropertiesCfg(
         rigid_body_enabled=True,
@@ -239,7 +235,7 @@ def make_target_cfg(name: str, info: dict) -> RigidObjectCfg:
             collision_props=collision_props,
         )
     return RigidObjectCfg(
-        prim_path=f"/World/{name.capitalize()}",
+        prim_path=prim_path or f"/World/{name.capitalize()}",
         spawn=spawn_cfg,
         init_state=RigidObjectCfg.InitialStateCfg(
             pos=info["spawn_pos"],
@@ -308,7 +304,7 @@ class SceneCfg(InteractiveSceneCfg):
             rot=CAMERA_MAIN_ROT,
             convention="opengl",
         ),
-    )   
+    )
 
     camera_wrist = CameraCfg(
         prim_path="/World/Robot/wrist_3_link/CameraWrist",
@@ -323,32 +319,6 @@ class SceneCfg(InteractiveSceneCfg):
         ),
     )
 
-    camera_orbit = CameraCfg(
-        prim_path="/World/CameraOrbit",
-        update_period=0.0,
-        height=ORBIT_CAMERA_HEIGHT, width=ORBIT_CAMERA_WIDTH,
-        data_types=["rgb"],
-        spawn=sim_utils.PinholeCameraCfg(focal_length=24.0),
-        offset=CameraCfg.OffsetCfg(
-            pos=(1.3, 0.15, 1.55),
-            rot=(0.354, 0.146, 0.354, 0.854),
-            convention="opengl",
-        ),
-    )
-    ee_frame = FrameTransformerCfg(
-        prim_path=f"{ROBOT_PRIM_PATH}/base_link",
-        target_frames=[
-            FrameTransformerCfg.FrameCfg(
-                prim_path=f"{ROBOT_PRIM_PATH}/wrist_3_link",
-                name="end_effector",
-                offset=OffsetCfg(
-                    pos=(0.0, 0.0, 0.18),
-                    rot=(1.0, 0.0, 0.0, 0.0),
-                ),
-            ),
-        ],
-    )
-
 
 def apply_scene_colors(stage):
     """Apply display colors to generated cuboid props after scene creation."""
@@ -358,18 +328,12 @@ def apply_scene_colors(stage):
         "/World/BackdropBack": BACKDROP_COLOR,
         "/World/BackdropSide": BACKDROP_COLOR,
     }
-    for target_name, target_info in TARGETS.items():
-        if "color" in target_info:
-            target_root = f"/World/{target_name.capitalize()}"
-            if target_info.get("collision_usd"):
-                prop_colors[target_root] = target_info["color"]
-            else:
-                prop_colors[f"{target_root}/Visuals"] = target_info["color"]
     for prim_path, color in prop_colors.items():
-        _set_display_color_recursive(stage, prim_path, color)
+        set_display_color_recursive(stage, prim_path, color)
+    apply_target_colors(stage, TARGETS.keys())
 
 
-def _set_display_color_recursive(stage, prim_path: str, color: tuple[float, float, float]) -> None:
+def set_display_color_recursive(stage, prim_path: str, color: tuple[float, float, float]) -> None:
     from pxr import Gf, Sdf, Usd, UsdGeom, UsdShade
 
     root = stage.GetPrimAtPath(prim_path)
@@ -396,7 +360,42 @@ def _set_display_color_recursive(stage, prim_path: str, color: tuple[float, floa
         log(f"Scene color skipped, no Gprim under: {prim_path}")
 
 
-def hide_proxy_meshes(stage, target_keys):
+def attach_target_visuals(stage, target_keys, root_prefix: str = "/World", check_source: bool = False):
+    """Attach visual-only YCB references for targets without local collision USDs."""
+    from isaacsim.core.utils.stage import add_reference_to_stage
+
+    for target_key in target_keys:
+        info = TARGETS[target_key]
+        if info.get("collision_usd"):
+            log(f"  {target_key}: using local collision USD, skip visual attach")
+            continue
+        usd_abs = f"{ISAAC_NUCLEUS_DIR}/{info['usd_relative']}"
+        visual_path = f"{root_prefix}/{target_key.capitalize()}/Visuals"
+        if check_source:
+            import omni.client
+
+            result, _ = omni.client.stat(usd_abs)
+            log(f"  {target_key}: stat={result}")
+        try:
+            if not stage.GetPrimAtPath(visual_path).IsValid():
+                add_reference_to_stage(usd_path=usd_abs, prim_path=visual_path)
+            log(f"  {target_key}: visual attached at {visual_path}")
+        except Exception as exc:
+            log(f"  attach failed ({target_key}): {exc}")
+
+
+def apply_target_colors(stage, target_keys, root_prefix: str = "/World"):
+    """Apply configured target colors under a single scene or cloned env root."""
+    for target_key in target_keys:
+        info = TARGETS[target_key]
+        if "color" not in info:
+            continue
+        target_root = f"{root_prefix}/{target_key.capitalize()}"
+        color_root = target_root if info.get("collision_usd") else f"{target_root}/Visuals"
+        set_display_color_recursive(stage, color_root, info["color"])
+
+
+def hide_proxy_meshes(stage, target_keys, root_prefix: str = "/World"):
     """Hide cuboid proxy meshes after visual YCB meshes are attached."""
     from pxr import UsdGeom
 
@@ -404,7 +403,7 @@ def hide_proxy_meshes(stage, target_keys):
         if TARGETS[target_key].get("collision_usd"):
             continue
         for sub in ("Visuals/geometry/mesh", "geometry/mesh"):
-            mesh_path = f"/World/{target_key.capitalize()}/{sub}"
+            mesh_path = f"{root_prefix}/{target_key.capitalize()}/{sub}"
             mesh_prim = stage.GetPrimAtPath(mesh_path)
             if mesh_prim.IsValid():
                 UsdGeom.Imageable(mesh_prim).GetVisibilityAttr().Set(UsdGeom.Tokens.invisible)

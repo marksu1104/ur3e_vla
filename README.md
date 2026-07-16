@@ -20,6 +20,10 @@ OpenVLA fine-tuning dataset. Collection and rollout use the same policy rate:
 12 sim steps per action at 60 Hz = 5 Hz
 ```
 
+Official collection uses the fixed standard `camera_main` view. Camera-view
+randomization is experimental and only enabled when explicitly requested with
+`--randomize-camera-view`.
+
 ## Project Layout
 
 ```text
@@ -27,15 +31,21 @@ scripts/
   collect_demos.py        Collect scripted H5 demonstrations.
   run_vla.py              Run Isaac Lab simulation with VLA actions.
   real_vla_servo.py       Send real-camera VLA twist commands through MoveIt Servo.
+  check_vla_prediction.py Compare server predictions with recorded H5 actions.
   subset_h5_demos.py      Create smaller H5 subsets.
+  export_h5_frames.py     Export recorded H5 images or videos for inspection.
+  capture_yolo_objects.py Capture static object-reference images.
+  make_usd_collision_asset.py  Rebuild local collision USD assets.
   vla_server.py           Serve OpenVLA inference over HTTP.
   multi_env/              Experimental multi-env collection and assembled-USD tools.
 
 docs/
+  command_reference.md          Complete customizable command examples.
   project_layout.md             Artifact/storage policy.
   real_robot_vla_runbook.md     Real UR3e test procedure.
 
 vla_sim/
+  isaac_app.py            Shared Isaac Lab startup and shutdown handling.
   config.py               Shared target, robot, camera, and limit config.
   scene.py                Isaac scene and assets.
   actions.py              Scripted trajectories and action conversion.
@@ -56,6 +66,9 @@ Raw command templates for normal runs and custom experiments are in `docs/comman
 The commands below are the recommended baseline flow. They are written out
 explicitly so paths and parameters stay visible. For custom experiments and
 extra variants, see [docs/command_reference.md](docs/command_reference.md).
+
+Do not add `--randomize-camera-view` to the baseline commands below. This keeps
+collection aligned with the fixed camera used by simulated rollout.
 
 ### 1. Collect 500-Demo Mug Datasets
 

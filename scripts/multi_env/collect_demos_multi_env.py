@@ -46,21 +46,9 @@ _extra_args, _ = _parser.parse_known_args()
 if not _extra_args.show_gui and "--headless" not in sys.argv:
     sys.argv.append("--headless")
 
-from vla_sim.isaac_app import boot_app, args_cli, log
+from vla_sim.isaac_app import boot_app, close_app, args_cli, log
 
 app = boot_app()
-_app_closed = False
-
-
-def close_app_once():
-    global _app_closed
-    if _app_closed:
-        return
-    _app_closed = True
-    try:
-        app.close(wait_for_replicator=False)
-    except TypeError:
-        app.close()
 
 
 import random
@@ -70,13 +58,12 @@ import numpy as np
 import torch
 
 import isaaclab.sim as sim_utils
-from isaaclab.assets import ArticulationCfg, AssetBaseCfg, RigidObjectCfg
+from isaaclab.assets import ArticulationCfg, AssetBaseCfg
 from isaaclab.actuators import ImplicitActuatorCfg
 from isaaclab.controllers import DifferentialIKController, DifferentialIKControllerCfg
 from isaaclab.scene import InteractiveScene, InteractiveSceneCfg
 from isaaclab.sensors.camera import CameraCfg
 from isaaclab.utils import configclass
-from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR
 
 from vla_sim.actions import PoseTrajectoryPlayer, compute_action_from_ee_poses
 from vla_sim.config import (
@@ -90,7 +77,6 @@ from vla_sim.config import (
     CAMERA_MAIN_ROT,
     CAMERA_WIDTH,
     EE_BODY_NAME,
-    EE_ORIENT_DOWN,
     GRIPPER_CLOSE,
     GRIPPER_MIMIC_MAP,
     GRIPPER_OPEN,
@@ -104,9 +90,6 @@ from vla_sim.config import (
     TABLE_MAT_A_POS,
     TABLE_MAT_B_POS,
     TABLE_MAT_SIZE,
-    TABLE_ROT,
-    TABLE_SCALE,
-    TABLE_USD_RELATIVE,
     TARGETS,
     WRIST_CAMERA_HEIGHT,
     WRIST_CAMERA_WIDTH,
@@ -114,11 +97,18 @@ from vla_sim.config import (
 from vla_sim.data_collector import EpisodeBuffer, append_episode_h5
 from vla_sim.video import VideoRecorder
 from vla_sim.demo_planning import (
-    detect_success,
+    build_pick_place_trajectory,
+    evaluate_pick_place_success,
     randomize_target_pose,
-    sample_grasp_parameters,
-    sample_grasp_quat,
     sample_scene_object_poses,
+)
+from vla_sim.scene import (
+    apply_target_colors,
+    attach_target_visuals,
+    hide_proxy_meshes,
+    make_static_cuboid_cfg,
+    make_table_cfg,
+    make_target_cfg,
 )
 
 random.seed(_extra_args.seed)
@@ -140,93 +130,6 @@ def _asset_path() -> str:
     return str(_extra_args.asset.expanduser().resolve())
 
 
-def _make_static_cuboid_cfg(prim_path: str, size: tuple, pos: tuple) -> AssetBaseCfg:
-    return AssetBaseCfg(
-        prim_path=prim_path,
-        spawn=sim_utils.CuboidCfg(
-            size=size,
-            rigid_props=sim_utils.RigidBodyPropertiesCfg(kinematic_enabled=True),
-            collision_props=sim_utils.CollisionPropertiesCfg(),
-        ),
-        init_state=AssetBaseCfg.InitialStateCfg(pos=pos),
-    )
-
-
-def _make_table_cfg(prim_path: str, pos: tuple) -> AssetBaseCfg:
-    return AssetBaseCfg(
-        prim_path=prim_path,
-        spawn=sim_utils.UsdFileCfg(
-            usd_path=f"{ISAAC_NUCLEUS_DIR}/{TABLE_USD_RELATIVE}",
-            scale=TABLE_SCALE,
-        ),
-        init_state=AssetBaseCfg.InitialStateCfg(pos=pos, rot=TABLE_ROT),
-    )
-
-
-
-def _set_display_color_recursive(stage, prim_path: str, color: tuple[float, float, float]) -> None:
-    from pxr import Gf, Sdf, Usd, UsdGeom, UsdShade
-
-    root = stage.GetPrimAtPath(prim_path)
-    if not root.IsValid():
-        return
-
-    safe_name = prim_path.strip("/").replace("/", "_")
-    material = UsdShade.Material.Define(stage, f"/World/Looks/{safe_name}_Material")
-    shader = UsdShade.Shader.Define(stage, f"/World/Looks/{safe_name}_Material/Shader")
-    shader.CreateIdAttr("UsdPreviewSurface")
-    shader.CreateInput("diffuseColor", Sdf.ValueTypeNames.Color3f).Set(Gf.Vec3f(*color))
-    shader.CreateInput("roughness", Sdf.ValueTypeNames.Float).Set(0.8)
-    material.CreateSurfaceOutput().ConnectToSource(shader.ConnectableAPI(), "surface")
-
-    for prim in Usd.PrimRange(root):
-        gprim = UsdGeom.Gprim(prim)
-        if gprim:
-            gprim.CreateDisplayColorAttr([color])
-            UsdShade.MaterialBindingAPI(prim).Bind(material)
-
-
-def _attach_target_visuals_for_envs(stage, num_envs: int) -> None:
-    """Match the single-env visual setup for every cloned env target."""
-    from isaacsim.core.utils.stage import add_reference_to_stage
-
-    log("Attaching target visuals for multi-env scene...")
-    for env_id in range(num_envs):
-        env_prefix = f"/World/envs/env_{env_id}"
-        for target_key, info in TARGETS.items():
-            target_root = f"{env_prefix}/{target_key.capitalize()}"
-            if info.get("collision_usd"):
-                log(f"  env{env_id} {target_key}: using local collision USD, skip visual attach")
-                continue
-            usd_abs = f"{ISAAC_NUCLEUS_DIR}/{info['usd_relative']}"
-            visual_path = f"{target_root}/Visuals"
-            try:
-                if not stage.GetPrimAtPath(visual_path).IsValid():
-                    add_reference_to_stage(usd_path=usd_abs, prim_path=visual_path)
-            except Exception as exc:
-                log(f"  attach failed (env{env_id} {target_key}): {exc}")
-
-
-def _apply_target_colors_for_envs(stage, num_envs: int) -> None:
-    """Apply the same red/blue mug colors and hide banana proxy meshes per env."""
-    from pxr import UsdGeom
-
-    for env_id in range(num_envs):
-        env_prefix = f"/World/envs/env_{env_id}"
-        for target_key, info in TARGETS.items():
-            target_root = f"{env_prefix}/{target_key.capitalize()}"
-            if "color" in info:
-                _set_display_color_recursive(stage, target_root, info["color"])
-            if not info.get("collision_usd"):
-                for sub in ("Visuals/geometry/mesh", "geometry/mesh"):
-                    mesh_path = f"{target_root}/{sub}"
-                    mesh_prim = stage.GetPrimAtPath(mesh_path)
-                    if mesh_prim.IsValid():
-                        UsdGeom.Imageable(mesh_prim).GetVisibilityAttr().Set(UsdGeom.Tokens.invisible)
-                        log(f"Hid proxy mesh: {mesh_path}")
-                        break
-
-
 def _tile_env_rgb(rgb_all: np.ndarray) -> np.ndarray:
     frames = np.asarray(rgb_all)[..., :3].astype(np.uint8)
     if frames.ndim == 3:
@@ -234,46 +137,6 @@ def _tile_env_rgb(rgb_all: np.ndarray) -> np.ndarray:
     if frames.ndim != 4:
         raise ValueError(f"expected camera rgb shape (N,H,W,C), got {frames.shape}")
     return np.concatenate([frames[i] for i in range(frames.shape[0])], axis=1)
-
-
-def _make_target_cfg(name: str, info: dict) -> RigidObjectCfg:
-    rigid_props = sim_utils.RigidBodyPropertiesCfg(
-        rigid_body_enabled=True,
-        solver_position_iteration_count=16,
-        solver_velocity_iteration_count=2,
-        max_linear_velocity=100.0,
-        max_angular_velocity=100.0,
-        max_depenetration_velocity=5.0,
-        linear_damping=0.2,
-        angular_damping=0.2,
-    )
-    mass_props = sim_utils.MassPropertiesCfg(mass=info["mass"])
-    collision_props = sim_utils.CollisionPropertiesCfg(
-        torsional_patch_radius=0.05,
-        min_torsional_patch_radius=0.05,
-    )
-    if info.get("collision_usd"):
-        spawn_cfg = sim_utils.UsdFileCfg(
-            usd_path=str(PROJECT_ROOT / "assets" / info["collision_usd"]),
-            rigid_props=rigid_props,
-            mass_props=mass_props,
-            collision_props=collision_props,
-        )
-    else:
-        spawn_cfg = sim_utils.CuboidCfg(
-            size=info["size"],
-            rigid_props=rigid_props,
-            mass_props=mass_props,
-            collision_props=collision_props,
-        )
-    return RigidObjectCfg(
-        prim_path=f"{{ENV_REGEX_NS}}/{name.capitalize()}",
-        spawn=spawn_cfg,
-        init_state=RigidObjectCfg.InitialStateCfg(
-            pos=info["spawn_pos"],
-            rot=info.get("spawn_rot", (1.0, 0.0, 0.0, 0.0)),
-        ),
-    )
 
 
 def _make_robot_cfg() -> ArticulationCfg:
@@ -312,16 +175,16 @@ class MultiEnvSceneCfg(InteractiveSceneCfg):
     )
     robot = _make_robot_cfg()
 
-    table_a = _make_table_cfg("{ENV_REGEX_NS}/TableA", TABLE_A_POS)
-    table_b = _make_table_cfg("{ENV_REGEX_NS}/TableB", TABLE_B_POS)
-    mat_a = _make_static_cuboid_cfg("{ENV_REGEX_NS}/MatA", TABLE_MAT_SIZE, TABLE_MAT_A_POS)
-    mat_b = _make_static_cuboid_cfg("{ENV_REGEX_NS}/MatB", TABLE_MAT_SIZE, TABLE_MAT_B_POS)
-    backdrop_back = _make_static_cuboid_cfg("{ENV_REGEX_NS}/BackdropBack", BACKDROP_BACK_SIZE, BACKDROP_BACK_POS)
-    backdrop_side = _make_static_cuboid_cfg("{ENV_REGEX_NS}/BackdropSide", BACKDROP_SIDE_SIZE, BACKDROP_SIDE_POS)
+    table_a = make_table_cfg("{ENV_REGEX_NS}/TableA", TABLE_A_POS)
+    table_b = make_table_cfg("{ENV_REGEX_NS}/TableB", TABLE_B_POS)
+    mat_a = make_static_cuboid_cfg("{ENV_REGEX_NS}/MatA", TABLE_MAT_SIZE, TABLE_MAT_A_POS)
+    mat_b = make_static_cuboid_cfg("{ENV_REGEX_NS}/MatB", TABLE_MAT_SIZE, TABLE_MAT_B_POS)
+    backdrop_back = make_static_cuboid_cfg("{ENV_REGEX_NS}/BackdropBack", BACKDROP_BACK_SIZE, BACKDROP_BACK_POS)
+    backdrop_side = make_static_cuboid_cfg("{ENV_REGEX_NS}/BackdropSide", BACKDROP_SIDE_SIZE, BACKDROP_SIDE_POS)
 
-    banana = _make_target_cfg("banana", TARGETS["banana"])
-    red_mug = _make_target_cfg("red_mug", TARGETS["red_mug"])
-    blue_mug = _make_target_cfg("blue_mug", TARGETS["blue_mug"])
+    banana = make_target_cfg("banana", TARGETS["banana"], "{ENV_REGEX_NS}/Banana")
+    red_mug = make_target_cfg("red_mug", TARGETS["red_mug"], "{ENV_REGEX_NS}/Red_mug")
+    blue_mug = make_target_cfg("blue_mug", TARGETS["blue_mug"], "{ENV_REGEX_NS}/Blue_mug")
 
     camera_main = CameraCfg(
         prim_path="{ENV_REGEX_NS}/CameraMain",
@@ -348,82 +211,6 @@ def _shape_of(value):
         return tuple(value.shape)
     except Exception:
         return None
-
-
-def _make_trajectory(target_info: dict, target_resting: np.ndarray, spawn_rot: tuple, rng: np.random.Generator, env_origin: np.ndarray):
-    tx, ty, tz = target_resting.tolist()
-    home_pos_w = tuple((np.asarray(HOME_POS, dtype=np.float32) + env_origin.astype(np.float32)).tolist())
-    grasp_params = sample_grasp_parameters(target_info, rng)
-    gx = tx + grasp_params["x_nudge"]
-    gy = ty + grasp_params["y_nudge"]
-    hover_z = tz + grasp_params["hover_z"]
-    grasp_z = tz + grasp_params["grasp_z"]
-
-    hover_pos = (gx, gy, hover_z)
-    pre_grasp_pos = (gx, gy, min(grasp_z + 0.055, hover_z))
-    grasp_pos = (gx, gy, grasp_z)
-    lift_start_pos = (gx, gy, min(grasp_z + 0.025, hover_z))
-    grasp_quat = sample_grasp_quat(target_info, spawn_rot, rng)
-
-    hover_dt = float(rng.uniform(3.2, 3.8))
-    pre_grasp_dt = float(rng.uniform(1.9, 2.4))
-    descend_dt = float(rng.uniform(1.0, 1.4))
-    close_dt = float(rng.uniform(0.35, 0.55))
-    lift_start_dt = float(rng.uniform(0.45, 0.70))
-    lift_dt = float(rng.uniform(2.1, 2.6))
-    carry_dt = float(rng.uniform(2.7, 3.3))
-    release_dt = float(rng.uniform(1.6, 2.1))
-
-    trajectory = [
-        (0.0, home_pos_w, EE_ORIENT_DOWN, GRIPPER_OPEN),
-        (hover_dt, hover_pos, grasp_quat, GRIPPER_OPEN),
-        (pre_grasp_dt, pre_grasp_pos, grasp_quat, GRIPPER_OPEN),
-        (descend_dt, grasp_pos, grasp_quat, GRIPPER_OPEN),
-        (close_dt, grasp_pos, grasp_quat, GRIPPER_CLOSE),
-        (lift_start_dt, lift_start_pos, grasp_quat, GRIPPER_CLOSE),
-        (lift_dt, hover_pos, grasp_quat, GRIPPER_CLOSE),
-        (carry_dt, home_pos_w, grasp_quat, GRIPPER_CLOSE),
-        (release_dt, home_pos_w, grasp_quat, GRIPPER_OPEN),
-    ]
-    meta = {
-        "grasp_params": {k: float(v) for k, v in grasp_params.items()},
-        "grasp_quat": list(map(float, grasp_quat)),
-        "place_pos": list(map(float, home_pos_w)),
-        "durations": {
-            "hover": hover_dt,
-            "pre_grasp": pre_grasp_dt,
-            "descend": descend_dt,
-            "close": close_dt,
-            "lift_start": lift_start_dt,
-            "lift": lift_dt,
-            "carry": carry_dt,
-            "release": release_dt,
-        },
-    }
-    return trajectory, meta
-
-
-def _success_for_env(target_obj, env_id: int, ee_pos: np.ndarray, target_initial_z: float, gripper_q: float, best_lift: float, place: np.ndarray, env_origin: np.ndarray):
-    obj_pos = target_obj.data.root_pos_w[env_id].detach().cpu().numpy()
-    ee_local = ee_pos - env_origin
-    obj_lift_height = float(obj_pos[2] - target_initial_z)
-    place_dist = float(np.linalg.norm(obj_pos[:2] - place[:2]))
-    obj_lifted = best_lift > 0.04
-    obj_at_place = place_dist < 0.10
-    ee_safe = bool((1.05 < ee_local[2] < 1.7) and (-0.5 < ee_local[0] < 0.7))
-    return obj_lifted and obj_at_place, {
-        "obj_lifted": bool(obj_lifted),
-        "obj_at_place": bool(obj_at_place),
-        "ee_safe": ee_safe,
-        "obj_pos_final": obj_pos.tolist(),
-        "ee_pos_final": ee_pos.tolist(),
-        "obj_lift_height": obj_lift_height,
-        "best_lift_height": float(best_lift),
-        "obj_place_xy_dist": place_dist,
-        "place_pos": place.tolist(),
-        "place_xy_threshold": 0.10,
-        "gripper_closed": bool(gripper_q > 0.3),
-    }
 
 
 def _setup_batch(scene, sim, robot, sim_dt, rngs, target_name, target_info, arm_ids_t, finger_ids_t, gripper_signs, gripper_lows, gripper_highs):
@@ -499,10 +286,15 @@ def _setup_batch(scene, sim, robot, sim_dt, rngs, target_name, target_info, arm_
     traj_meta = []
     for env_id in range(num_envs):
         _pos, spawn_rot = sampled_by_env[env_id][target_name]
-        trajectory, meta = _make_trajectory(target_info, target_resting[env_id], spawn_rot, rngs[env_id], origins_np[env_id])
+        home_pos_w = tuple((np.asarray(HOME_POS, dtype=np.float32) + origins_np[env_id]).tolist())
+        trajectory, meta = build_pick_place_trajectory(
+            target_info,
+            target_resting[env_id],
+            spawn_rot,
+            rngs[env_id],
+            place_pos=home_pos_w,
+        )
         players.append(PoseTrajectoryPlayer(trajectory, device=device))
-        meta["grasp_pos"] = list(map(float, trajectory[3][1]))
-        meta["hover_pos"] = list(map(float, trajectory[1][1]))
         meta["scene_object_poses"] = {
             name: {"pos": list(map(float, pose[0])), "rot": list(map(float, pose[1]))}
             for name, pose in sampled_by_env[env_id].items()
@@ -625,17 +417,17 @@ def _run_batch(sim, scene, robot, ik, sim_dt, arm_ids_t, finger_ids_t, gripper_s
 
     results = []
     ee_pos_final_all = robot.data.body_state_w[:, ee_body_idx, :3].detach().cpu().numpy()
+    obj_pos_final_all = target_obj.data.root_pos_w.detach().cpu().numpy()
     joint_final_all = robot.data.joint_pos[:, finger_ids_t].detach().cpu().numpy()
     for env_id in range(num_envs):
-        success, diag = _success_for_env(
-            target_obj,
-            env_id,
+        success, diag = evaluate_pick_place_success(
+            obj_pos_final_all[env_id],
             ee_pos_final_all[env_id],
             float(target_initial_z[env_id]),
             float(last_grip[env_id]),
-            float(best_lift[env_id]),
             place_positions[env_id],
-            origins_np[env_id],
+            float(best_lift[env_id]),
+            ee_pos_for_safety=ee_pos_final_all[env_id] - origins_np[env_id],
         )
         grasp_pos = np.asarray(traj_meta[env_id]["grasp_pos"], dtype=np.float32)
         final_obj = np.asarray(diag["obj_pos_final"], dtype=np.float32)
@@ -705,12 +497,18 @@ def main():
     sim = sim_utils.SimulationContext(sim_utils.SimulationCfg(device="cuda:0", dt=PHYSICS_DT))
     scene = InteractiveScene(MultiEnvSceneCfg(num_envs=num_envs, env_spacing=2.0))
     stage = omni.usd.get_context().get_stage()
-    _attach_target_visuals_for_envs(stage, num_envs)
+    log("Attaching target visuals for multi-env scene...")
+    for env_id in range(num_envs):
+        env_prefix = f"/World/envs/env_{env_id}"
+        attach_target_visuals(stage, TARGETS.keys(), root_prefix=env_prefix)
     log("Phase: sim.reset() + sim.play()")
     sim.reset()
     sim.play()
     sim_dt = sim.get_physics_dt()
-    _apply_target_colors_for_envs(stage, num_envs)
+    for env_id in range(num_envs):
+        env_prefix = f"/World/envs/env_{env_id}"
+        apply_target_colors(stage, TARGETS.keys(), root_prefix=env_prefix)
+        hide_proxy_meshes(stage, TARGETS.keys(), root_prefix=env_prefix)
 
     robot = scene["robot"]
     device = str(sim.device)
@@ -819,4 +617,4 @@ if __name__ == "__main__":
         log(traceback.format_exc())
         raise
     finally:
-        close_app_once()
+        close_app()

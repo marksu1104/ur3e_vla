@@ -10,13 +10,7 @@ import sys
 
 from isaaclab.app import AppLauncher
 
-from vla_sim.config import (
-    DEFAULT_CAMERA_FPS,
-    DEFAULT_RECORD_SECONDS,
-    DEFAULT_ORBIT_SNAPSHOTS,
-    DEFAULT_ORBIT_VIDEO_FRAMES,
-    TARGETS,
-)
+from vla_sim.config import TARGETS
 
 
 def log(msg: str):
@@ -31,19 +25,9 @@ if "--enable_cameras" not in sys.argv:
 def parse_cli_args():
     parser = argparse.ArgumentParser(allow_abbrev=False)
     AppLauncher.add_app_launcher_args(parser)
-    parser.add_argument("--record-seconds", type=int, default=DEFAULT_RECORD_SECONDS)
-    parser.add_argument("--camera-fps",     type=int, default=DEFAULT_CAMERA_FPS)
     parser.add_argument(
         "--target", type=str, default="banana", choices=list(TARGETS.keys()),
         help="Which YCB object to grasp",
-    )
-    parser.add_argument(
-        "--orbit-snapshots", type=int, default=DEFAULT_ORBIT_SNAPSHOTS,
-        help="Number of orbit snapshots to capture after trajectory (0 = skip)",
-    )
-    parser.add_argument(
-        "--orbit-video-frames", type=int, default=DEFAULT_ORBIT_VIDEO_FRAMES,
-        help="Number of frames in orbit video (0 = skip video)",
     )
     args, _ = parser.parse_known_args()
     args.enable_cameras = True
@@ -58,6 +42,7 @@ args_cli.experience = "isaacsim.exp.full.kit"
 
 _launcher = None
 _app = None
+_app_closed = False
 
 
 def boot_app():
@@ -90,3 +75,15 @@ def boot_app():
           f"{settings.get('/isaaclab/cameras_enabled')}")
 
     return _app
+
+
+def close_app():
+    """Close the shared SimulationApp once."""
+    global _app_closed
+    if _app is None or _app_closed:
+        return
+    _app_closed = True
+    try:
+        _app.close(wait_for_replicator=False)
+    except TypeError:
+        _app.close()

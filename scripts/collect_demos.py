@@ -22,8 +22,8 @@ _extra.add_argument("--randomize-rot", action=argparse.BooleanOptionalAction, de
                     help="Randomize target yaw while preserving base orientation.")
 _extra.add_argument("--randomize-light", action=argparse.BooleanOptionalAction, default=True,
                     help="Randomize dome light intensity and color.")
-_extra.add_argument("--randomize-camera-view", action=argparse.BooleanOptionalAction, default=True,
-                    help="Randomly choose a small camera_main view preset per episode.")
+_extra.add_argument("--randomize-camera-view", action=argparse.BooleanOptionalAction, default=False,
+                    help="Opt in to choosing a small camera_main view preset per episode.")
 _extra.add_argument("--keep-sim-alive", action=argparse.BooleanOptionalAction, default=False,
                     help="Keep simulation open after collection.")
 _extra.add_argument("--show-gui", action="store_true",
@@ -89,22 +89,9 @@ if _extra_args.record_video:
 if not _extra_args.show_gui and "--headless" not in sys.argv:
     sys.argv.append("--headless")
 
-from vla_sim.isaac_app import boot_app, args_cli, log
+from vla_sim.isaac_app import boot_app, close_app, args_cli, log
 
 app = boot_app()
-_app_closed = False
-
-
-def close_app_once():
-    """Close Isaac Sim once; some Kit versions are unhappy with duplicate close calls."""
-    global _app_closed
-    if _app_closed:
-        return
-    _app_closed = True
-    try:
-        app.close(wait_for_replicator=False)
-    except TypeError:
-        app.close()
 
 
 import time
@@ -118,12 +105,10 @@ import omni.usd
 import isaaclab.sim as sim_utils
 from isaaclab.scene import InteractiveScene
 from isaaclab.controllers import DifferentialIKController, DifferentialIKControllerCfg
-from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR
-
 from vla_sim.config import (
     PHYSICS_DT,
     ROBOT_BASE_POS, ROBOT_BASE_ROT,
-    EE_BODY_NAME, EE_ORIENT_DOWN,
+    EE_BODY_NAME,
     GRIPPER_OPEN, GRIPPER_CLOSE,
     HOME_POS, HOME_Q,
     TARGETS, CAMERA_MAIN_VIEW_PRESETS,
@@ -133,16 +118,16 @@ from vla_sim.scene import (
     enable_extensions,
     spawn_raw_and_assemble,
     SceneCfg,
+    attach_target_visuals,
     apply_scene_colors,
     hide_proxy_meshes,
 )
 from vla_sim.actions import PoseTrajectoryPlayer, compute_action_from_ee_poses
 from vla_sim.data_collector import EpisodeBuffer, append_episode_h5
 from vla_sim.demo_planning import (
+    build_pick_place_trajectory,
     randomize_lighting,
     randomize_target_pose,
-    sample_grasp_parameters,
-    sample_grasp_quat,
     sample_scene_object_poses,
     detect_success,
 )
@@ -255,48 +240,13 @@ def run_one_episode(
 
     target_resting = target_obj.data.root_pos_w[0].cpu().numpy()
     target_initial_z = float(target_resting[2])
-    tx, ty, tz = target_resting.tolist()
-    grasp_params = sample_grasp_parameters(target_info, rng)
-    gx = tx + grasp_params["x_nudge"]
-    gy = ty + grasp_params["y_nudge"]
-    hover_z = tz + grasp_params["hover_z"]
-    grasp_z = tz + grasp_params["grasp_z"]
-
-    HOVER_POS = (gx, gy, hover_z)
-    PRE_GRASP_POS = (gx, gy, min(grasp_z + 0.055, hover_z))
-    GRASP_POS = (gx, gy, grasp_z)
-    LIFT_START_POS = (gx, gy, min(grasp_z + 0.025, hover_z))
-    grasp_quat = sample_grasp_quat(target_info, spawn_rot, rng)
-
-    # Add small timing variation so the policy cannot overfit to a fixed close
-    # step. The visual/robot state should determine when to close, not episode
-    # clock time. Keep close itself short, then immediately lift.
-    hover_dt = float(rng.uniform(3.2, 3.8))
-    yaw_dt = 0.0
-    pre_grasp_dt = float(rng.uniform(1.9, 2.4))
-    descend_dt = float(rng.uniform(1.0, 1.4))
-    close_dt = float(rng.uniform(0.35, 0.55))
-    lift_start_dt = float(rng.uniform(0.45, 0.70))
-    lift_dt = float(rng.uniform(2.1, 2.6))
-    carry_dt = float(rng.uniform(2.7, 3.3))
-    release_dt = float(rng.uniform(1.6, 2.1))
-
-    trajectory = [
-        (0.0, HOME_POS,  EE_ORIENT_DOWN, GRIPPER_OPEN),
-        # Move toward the hover pose while yaw-aligning. A separate stationary
-        # yaw segment made larger datasets overfit to hovering/yawing instead
-        # of descending once aligned.
-        (hover_dt, HOVER_POS, grasp_quat, GRIPPER_OPEN),
-        (pre_grasp_dt, PRE_GRASP_POS, grasp_quat, GRIPPER_OPEN),
-        (descend_dt, GRASP_POS, grasp_quat, GRIPPER_OPEN),
-        # Close briefly while stationary for a stable grasp, then lift right
-        # away to make the close -> lift transition unambiguous.
-        (close_dt, GRASP_POS, grasp_quat, GRIPPER_CLOSE),
-        (lift_start_dt, LIFT_START_POS, grasp_quat, GRIPPER_CLOSE),
-        (lift_dt, HOVER_POS, grasp_quat, GRIPPER_CLOSE),
-        (carry_dt, HOME_POS,  grasp_quat, GRIPPER_CLOSE),
-        (release_dt, HOME_POS,  grasp_quat, GRIPPER_OPEN),
-    ]
+    trajectory, trajectory_meta = build_pick_place_trajectory(
+        target_info,
+        target_resting,
+        spawn_rot,
+        rng,
+        place_pos=HOME_POS,
+    )
     player = PoseTrajectoryPlayer(trajectory, device=device)
 
     buffer = EpisodeBuffer(
@@ -444,24 +394,14 @@ def run_one_episode(
     diag["num_steps_recorded"]  = len(buffer.main_images)
     diag["spawn_pos"]           = list(map(float, spawn_pos))
     diag["spawn_rot"]           = list(map(float, spawn_rot))
-    diag["grasp_params"]        = {k: float(v) for k, v in grasp_params.items()}
-    diag["grasp_quat"]          = list(map(float, grasp_quat))
+    diag["grasp_params"]        = trajectory_meta["grasp_params"]
+    diag["grasp_quat"]          = trajectory_meta["grasp_quat"]
     diag["camera_main_view"]    = {
         "name": camera_view.get("name", "unknown"),
         "pos": list(map(float, camera_view["pos"])),
         "rot": list(map(float, camera_view["rot"])),
     }
-    diag["trajectory_durations"] = {
-        "hover": hover_dt,
-        "yaw": yaw_dt,
-        "pre_grasp": pre_grasp_dt,
-        "descend": descend_dt,
-        "close": close_dt,
-        "lift_start": lift_start_dt,
-        "lift": lift_dt,
-        "carry": carry_dt,
-        "release": release_dt,
-    }
+    diag["trajectory_durations"] = trajectory_meta["durations"]
     diag["scene_object_poses"]  = {
         name: {
             "pos": list(map(float, pose[0])),
@@ -542,24 +482,14 @@ def main():
     scene = InteractiveScene(scene_cfg)
 
     log("Attaching YCB visual meshes...")
-    from isaacsim.core.utils.stage import add_reference_to_stage
-    for target_key, info in TARGETS.items():
-        if info.get("collision_usd"):
-            log(f"  {target_key}: using local collision USD, skip visual attach")
-            continue
-        usd_abs = f"{ISAAC_NUCLEUS_DIR}/{info['usd_relative']}"
-        visual_path = f"/World/{target_key.capitalize()}/Visuals"
-        try:
-            add_reference_to_stage(usd_path=usd_abs, prim_path=visual_path)
-        except Exception as e:
-            log(f"  attach failed ({target_key}): {e}")
+    stage = omni.usd.get_context().get_stage()
+    attach_target_visuals(stage, TARGETS.keys())
 
     log("Phase 3: sim.reset() + sim.play()")
     sim.reset()
     sim.play()
     sim_dt = sim.get_physics_dt()
 
-    stage = omni.usd.get_context().get_stage()
     apply_scene_colors(stage)
     hide_proxy_meshes(stage, TARGETS.keys())
 
@@ -715,4 +645,4 @@ if __name__ == "__main__":
     try:
         main()
     finally:
-        close_app_once()
+        close_app()

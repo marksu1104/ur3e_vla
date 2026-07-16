@@ -9,6 +9,14 @@ import requests
 from PIL import Image
 
 
+def encode_rgb_jpeg_base64(rgb: np.ndarray, quality: int = 90) -> str:
+    """Encode an RGB uint8 array as a base64 JPEG payload."""
+    image = Image.fromarray(np.asarray(rgb, dtype=np.uint8))
+    buffer = io.BytesIO()
+    image.save(buffer, format="JPEG", quality=quality)
+    return base64.b64encode(buffer.getvalue()).decode("ascii")
+
+
 class VLAClient:
     """Small client used by the Isaac Lab simulation process."""
 
@@ -45,15 +53,10 @@ class VLAClient:
         t0 = time.monotonic()
 
         try:
-            pil_img = Image.fromarray(rgb.astype(np.uint8))
-            buf = io.BytesIO()
-            pil_img.save(buf, format="JPEG", quality=90)
-            img_b64 = base64.b64encode(buf.getvalue()).decode()
-
             response = requests.post(
                 f"{self.server_url}/predict",
                 json={
-                    "image_b64": img_b64,
+                    "image_b64": encode_rgb_jpeg_base64(rgb),
                     "instruction": instruction,
                     "unnorm_key": unnorm_key,
                 },

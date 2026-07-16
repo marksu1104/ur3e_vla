@@ -41,22 +41,9 @@ _extra_args, _ = _extra.parse_known_args()
 if not _extra_args.show_gui and "--headless" not in sys.argv:
     sys.argv.append("--headless")
 
-from vla_sim.isaac_app import boot_app, log
+from vla_sim.isaac_app import boot_app, close_app, log
 
 app = boot_app()
-_app_closed = False
-
-
-def close_app_once():
-    """Close Isaac Sim once; some Kit versions dislike duplicate closes."""
-    global _app_closed
-    if _app_closed:
-        return
-    _app_closed = True
-    try:
-        app.close(wait_for_replicator=False)
-    except TypeError:
-        app.close()
 
 
 import numpy as np
@@ -84,6 +71,7 @@ from vla_sim.scene import (
     enable_extensions,
     spawn_raw_and_assemble,
     SceneCfg,
+    attach_target_visuals,
     apply_scene_colors,
     hide_proxy_meshes,
 )
@@ -182,24 +170,6 @@ class CaptureSceneCfg(SceneCfg):
             convention="opengl",
         ),
     )
-
-
-def attach_ycb_visual_meshes():
-    """Same visual attach loop used by collect_demos.py."""
-    from isaacsim.core.utils.stage import add_reference_to_stage
-
-    log("Attaching YCB visual meshes...")
-    for target_key, info in TARGETS.items():
-        if info.get("collision_usd"):
-            log(f"  {target_key}: using local collision USD, skip visual attach")
-            continue
-        usd_abs = f"{ISAAC_NUCLEUS_DIR}/{info['usd_relative']}"
-        visual_path = f"/World/{target_key.capitalize()}/Visuals"
-        try:
-            add_reference_to_stage(usd_path=usd_abs, prim_path=visual_path)
-            log(f"  {target_key}: visual attached at {visual_path}")
-        except Exception as exc:
-            log(f"  attach failed ({target_key}): {exc}")
 
 
 def set_prim_visibility(stage, prim_path: str, visible: bool) -> None:
@@ -347,8 +317,10 @@ def main():
     sim = sim_utils.SimulationContext(sim_utils.SimulationCfg(device="cuda:0", dt=PHYSICS_DT))
     scene_cfg = CaptureSceneCfg(num_envs=1, env_spacing=2.0)
     scene = InteractiveScene(scene_cfg)
+    stage = omni.usd.get_context().get_stage()
 
-    attach_ycb_visual_meshes()
+    log("Attaching YCB visual meshes...")
+    attach_target_visuals(stage, TARGETS.keys())
     add_capture_bowl()
 
     log("Phase 3: sim.reset() + sim.play()")
@@ -356,7 +328,6 @@ def main():
     sim.play()
     sim_dt = sim.get_physics_dt()
 
-    stage = omni.usd.get_context().get_stage()
     apply_scene_colors(stage)
     hide_proxy_meshes(stage, TARGETS.keys())
 
@@ -428,4 +399,4 @@ if __name__ == "__main__":
     try:
         main()
     finally:
-        close_app_once()
+        close_app()

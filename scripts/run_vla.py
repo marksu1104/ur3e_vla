@@ -71,8 +71,6 @@ import omni.usd
 import isaaclab.sim as sim_utils
 from isaaclab.scene import InteractiveScene
 from isaaclab.controllers import DifferentialIKController, DifferentialIKControllerCfg
-from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR
-
 from vla_sim.config import (
     PHYSICS_DT,
     ROBOT_BASE_POS, ROBOT_BASE_ROT,
@@ -87,6 +85,7 @@ from vla_sim.scene import (
     enable_extensions,
     spawn_raw_and_assemble,
     SceneCfg,
+    attach_target_visuals,
     apply_scene_colors,
     hide_proxy_meshes,
 )
@@ -158,22 +157,9 @@ def main():
         log(traceback.format_exc())
         raise
 
-    # Attach YCB visual mesh
     log("Attaching YCB visual meshes...")
-    from isaacsim.core.utils.stage import add_reference_to_stage
-    import omni.client as _client
-    for target_key, info in TARGETS.items():
-        if info.get("collision_usd"):
-            log(f"  {target_key}: using local collision USD, skip visual attach")
-            continue
-        usd_abs = f"{ISAAC_NUCLEUS_DIR}/{info['usd_relative']}"
-        visual_path = f"/World/{target_key.capitalize()}/Visuals"
-        result, _ = _client.stat(usd_abs)
-        log(f"  {target_key}: stat={result}")
-        try:
-            add_reference_to_stage(usd_path=usd_abs, prim_path=visual_path)
-        except Exception as e:
-            log(f"  attach FAILED ({target_key}): {e}")
+    stage = omni.usd.get_context().get_stage()
+    attach_target_visuals(stage, TARGETS.keys(), check_source=True)
 
     log("Phase 3.1: sim.reset()...")
     try:
@@ -194,7 +180,6 @@ def main():
         raise
 
     sim_dt = sim.get_physics_dt()
-    stage = omni.usd.get_context().get_stage()
     apply_scene_colors(stage)
     hide_proxy_meshes(stage, TARGETS.keys())
 

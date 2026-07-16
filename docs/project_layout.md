@@ -16,17 +16,23 @@ outputs/
     mugs_100/
       red_mug/demos.h5
       blue_mug/demos.h5
+    mugs_250/
+      red_mug/demos.h5
+      blue_mug/demos.h5
     legacy_banana/
       banana/demos.h5
 
   tfds/
     mugs_100/
       ur3e_vla_dataset/
+    mugs_250/
+      ur3e_vla_dataset/
     mugs_500/
       ur3e_vla_dataset/
 
   models/
     ur3e_vla_mugs_100/
+    ur3e_vla_mugs_250/
     ur3e_vla_mugs_500/
     runs/
     checkpoints/
@@ -52,7 +58,8 @@ outputs/
 
 ## Code Organization
 
-- `scripts/`: Python programs and reusable project functionality.
+- `scripts/`: executable collection, conversion, inference, and inspection tools.
+- `scripts/multi_env/`: experimental vectorized collection and assembled-USD tools.
 - `docs/command_reference.md`: explicit terminal commands for normal runs and custom experiments.
 - `docs/`: runbooks, operational notes, and artifact policy.
 - `vla_sim/`: simulation package code.

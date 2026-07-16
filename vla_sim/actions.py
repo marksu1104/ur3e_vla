@@ -31,29 +31,6 @@ def clamp_action(action_7d) -> np.ndarray:
     return action
 
 
-def action_to_dict(action_7d) -> dict:
-    """Convert a 7D action to a JSON-friendly dictionary."""
-    a = np.asarray(action_7d, dtype=np.float32).reshape(-1)
-    return {
-        "dx":      float(a[0]),
-        "dy":      float(a[1]),
-        "dz":      float(a[2]),
-        "droll":   float(a[3]),
-        "dpitch":  float(a[4]),
-        "dyaw":    float(a[5]),
-        "gripper": float(a[6]),
-    }
-
-
-def action_from_dict(d: dict) -> np.ndarray:
-    """Convert a JSON-friendly action dictionary back to a 7D array."""
-    return np.array([
-        d["dx"], d["dy"], d["dz"],
-        d["droll"], d["dpitch"], d["dyaw"],
-        d["gripper"],
-    ], dtype=np.float32)
-
-
 def compute_action_from_ee_poses(
     ee_pos_curr, ee_quat_curr,
     ee_pos_next, ee_quat_next,

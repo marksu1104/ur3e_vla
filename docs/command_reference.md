@@ -69,6 +69,9 @@ For quick tests, write into `outputs/test/` instead of curated H5 folders:
 Useful collect variations:
 
 ```bash
+# Experimental only: sample one of the configured camera presets per episode.
+--randomize-camera-view
+
 # Fixed object pose/light for debugging.
 --no-randomize-pos --no-randomize-rot --no-randomize-light
 

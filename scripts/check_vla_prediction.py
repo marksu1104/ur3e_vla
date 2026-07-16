@@ -1,15 +1,19 @@
 """Compare VLA predictions against actions stored in a demonstration HDF5 file."""
 
 import argparse
-import base64
-import io
 from pathlib import Path
+import sys
 import time
 
 import h5py
 import numpy as np
 import requests
-from PIL import Image
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from vla_sim.vla_client import encode_rgb_jpeg_base64
 
 
 def parse_args():
@@ -30,12 +34,6 @@ def decode_task(value) -> str:
     return str(value)
 
 
-def encode_image(image: np.ndarray) -> str:
-    buffer = io.BytesIO()
-    Image.fromarray(image.astype(np.uint8)).save(buffer, format="JPEG", quality=90)
-    return base64.b64encode(buffer.getvalue()).decode("utf-8")
-
-
 def main():
     args = parse_args()
     with h5py.File(args.h5, "r") as h5_file:
@@ -48,7 +46,7 @@ def main():
             image = np.asarray(demo["image"][step], dtype=np.uint8)
             gt_action = np.asarray(demo["action"][step], dtype=np.float32)[:7]
             payload = {
-                "image_b64": encode_image(image),
+                "image_b64": encode_rgb_jpeg_base64(image),
                 "instruction": instruction,
                 "unnorm_key": args.unnorm_key,
             }

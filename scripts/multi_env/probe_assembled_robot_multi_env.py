@@ -36,21 +36,9 @@ _extra_args, _ = _parser.parse_known_args()
 if not _extra_args.show_gui and "--headless" not in sys.argv:
     sys.argv.append("--headless")
 
-from vla_sim.isaac_app import boot_app, log
+from vla_sim.isaac_app import boot_app, close_app, log
 
 app = boot_app()
-_app_closed = False
-
-
-def close_app_once():
-    global _app_closed
-    if _app_closed:
-        return
-    _app_closed = True
-    try:
-        app.close(wait_for_replicator=False)
-    except TypeError:
-        app.close()
 
 
 import traceback
@@ -255,4 +243,4 @@ if __name__ == "__main__":
         log(traceback.format_exc())
         raise
     finally:
-        close_app_once()
+        close_app()
