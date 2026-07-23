@@ -47,6 +47,7 @@ class RemoteBridge:
         host: str = "127.0.0.1",
         port: int = 8100,
         jpeg_quality: int = 85,
+        allow_tasks: bool = True,
     ):
         self.task_names = {
             int(key): str(value) for key, value in task_names.items()
@@ -55,6 +56,7 @@ class RemoteBridge:
         self.host = host
         self.port = int(port)
         self.jpeg_quality = int(np.clip(jpeg_quality, 1, 100))
+        self.allow_tasks = bool(allow_tasks)
 
         self._status_lock = threading.Lock()
         self._status: dict[str, Any] = {
@@ -129,6 +131,11 @@ class RemoteBridge:
 
         @app.post("/pickplace", status_code=202)
         async def pickplace(payload: dict[str, Any] = Body(...)):
+            if not self.allow_tasks:
+                raise HTTPException(
+                    status_code=409,
+                    detail="pickplace is unavailable in read-only mirror mode",
+                )
             obj = self._require_index(payload, "obj", self.task_names)
             dest = self._require_index(payload, "dest", range(self.num_positions))
             command = self._reserve_task(obj, dest)
@@ -399,6 +406,7 @@ class RemoteBridge:
             "waiting",
             "running",
             "paused",
+            "hold",
             "done",
         }:
             raise ValueError(f"unknown remote bridge state: {state}")

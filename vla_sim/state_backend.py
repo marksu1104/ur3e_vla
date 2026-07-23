@@ -10,6 +10,8 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING
 
+from vla_sim.joint_state_mirror import JointStateSnapshot, LatestJointState
+
 if TYPE_CHECKING:
     from vla_sim.runtime import RobotController
 
@@ -37,3 +39,31 @@ class ExternalStateBackend(StateBackend, ABC):
     intentionally contains no ROS publisher or robot-motion API.
     """
 
+
+class JointStateMirrorBackend(ExternalStateBackend):
+    """Write only the latest valid external arm sample into Isaac."""
+
+    def __init__(self, source: LatestJointState):
+        self.source = source
+        self.last_snapshot = source.snapshot()
+        self.paused = False
+
+    @property
+    def status(self) -> dict:
+        snapshot = self.last_snapshot
+        return {
+            "state": "paused" if self.paused else snapshot.state,
+            "detail": "paused" if self.paused else snapshot.detail,
+            "age_seconds": snapshot.age_seconds,
+            "received_at": snapshot.received_at,
+        }
+
+    def apply(self, controller: "RobotController", dt: float) -> None:
+        del dt
+        self.last_snapshot = self.source.snapshot()
+        if self.paused or not self.last_snapshot.is_live:
+            return
+        positions = self.last_snapshot.positions
+        if positions is None:
+            return
+        controller.write_measured_arm_state(positions)

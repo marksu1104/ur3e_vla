@@ -175,6 +175,19 @@ class RobotController:
         self._logical_gripper_command = logical
         self._physical_gripper_command = target
 
+    def write_measured_arm_state(self, positions) -> None:
+        """Write six measured arm joints without touching the virtual gripper."""
+        values = torch.as_tensor(positions, device=self.device, dtype=torch.float32)
+        if values.numel() != len(ARM_JOINT_NAMES):
+            raise ValueError("expected exactly six measured UR3e arm joint values")
+        values = values.reshape(1, len(ARM_JOINT_NAMES))
+        self.robot.write_joint_state_to_sim(
+            values,
+            torch.zeros_like(values),
+            joint_ids=self.arm_ids_t,
+        )
+        self.robot.set_joint_position_target(values, joint_ids=self.arm_ids_t)
+
     def apply_physics_targets(self) -> None:
         """Apply IK arm targets and the single official Robotiq drive joint."""
         root_pos = self.robot.data.root_state_w[:, :3]
