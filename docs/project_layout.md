@@ -9,43 +9,15 @@ files.
 
 ```text
 outputs/
-  h5/
-    mugs_500/
-      red_mug/demos.h5
-      blue_mug/demos.h5
-    mugs_100/
-      red_mug/demos.h5
-      blue_mug/demos.h5
-    mugs_250/
-      red_mug/demos.h5
-      blue_mug/demos.h5
-    legacy_banana/
-      banana/demos.h5
-
-  tfds/
-    mugs_100/
-      ur3e_vla_dataset/
-    mugs_250/
-      ur3e_vla_dataset/
-    mugs_500/
-      ur3e_vla_dataset/
-
-  models/
-    ur3e_vla_mugs_100/
-    ur3e_vla_mugs_250/
-    ur3e_vla_mugs_500/
-    runs/
-    checkpoints/
-
-  media/
-    sim_mug/
-    sim_banana/
-
-  test/
-    smoke/
-    h5/
-    media/
+  h5/        Canonical H5 demonstrations.
+  tfds/      Rebuilt RLDS/TFDS datasets.
+  models/    Training runs, checkpoints, and exports.
+  media/     Videos and inspection images.
+  test/      Disposable smoke-test output.
 ```
+
+Canonical H5 data uses `scene_profile=canonical_scene_v1`. Keep older mug-only
+datasets separate because their objects and gripper action representation differ.
 
 ## Storage Policy
 
@@ -58,8 +30,9 @@ outputs/
 
 ## Code Organization
 
-- `scripts/`: executable collection, conversion, inference, and inspection tools.
-- `scripts/multi_env/`: experimental vectorized collection and assembled-USD tools.
-- `docs/command_reference.md`: explicit terminal commands for normal runs and custom experiments.
+- `scripts/`: common runtime entrypoints.
+- `scripts/tools/`: maintenance, validation, and data-inspection utilities.
+- `scripts/collect_demos_multi_env.py`: vectorized demonstration collection.
+- `docs/command_reference.md`: explicit terminal commands for normal runs and custom runs.
 - `docs/`: runbooks, operational notes, and artifact policy.
 - `vla_sim/`: simulation package code.

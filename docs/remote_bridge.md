@@ -326,7 +326,7 @@ JPEG binary message、state JSON 與 complete JSON 會出現在同一條 WebSock
 - pause、resume、reset 對應 POST `/control`。
 - `/pickplace` 的 `trial_id` 對應 WebSocket `complete.trial_id`。
 
-`test_bridge_client.py` 使用完全相同的 HTTP 與 WebSocket 格式，可作為目前
+`scripts/tools/test_bridge_client.py` 使用完全相同的 HTTP 與 WebSocket 格式，可作為目前
 server 互動方式的參考；正式 Unity 直接由 C# 連線。
 
 ## 一次任務的資料流

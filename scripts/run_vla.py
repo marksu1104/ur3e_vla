@@ -31,17 +31,16 @@ from vla_sim.isaac_app import args_cli, boot_app, close_app, log
 app = boot_app()
 
 from vla_sim.actions import apply_delta_action, clamp_action
-from vla_sim.config import WORKSPACE_X, WORKSPACE_Y, WORKSPACE_Z
-from vla_sim.remote_config import REMOTE_TARGET_KEYS
+from vla_sim.config import TARGET_KEYS, WORKSPACE_X, WORKSPACE_Y, WORKSPACE_Z
 from vla_sim.runtime import RuntimeOptions, SimulationRuntime
 from vla_sim.vla_client import VLAClient
 
 
 def main() -> None:
     target_name = args_cli.target
-    if target_name not in REMOTE_TARGET_KEYS:
+    if target_name not in TARGET_KEYS:
         raise ValueError(
-            f"--target must be one of {REMOTE_TARGET_KEYS} in the canonical scene; "
+            f"--target must be one of {TARGET_KEYS} in the canonical scene; "
             f"received {target_name!r}"
         )
     if _extra_args.vla_step_interval < 1:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from abc import ABC, abstractmethod
 from dataclasses import dataclass
 
 import numpy as np
@@ -16,31 +17,30 @@ from isaaclab.scene import InteractiveScene
 from vla_sim.config import (
     EE_BODY_NAME,
     EE_ORIENT_DOWN,
+    GRIPPER_CLOSE,
     GRIPPER_OPEN,
+    GRIPPER_USD_RELATIVE,
     HOME_POS,
     HOME_Q,
     PHYSICS_DT,
+    PLACE_MARKER_COLORS,
     ROBOT_BASE_POS,
     ROBOT_BASE_ROT,
 )
 from vla_sim.isaac_app import log
-from vla_sim.remote_config import (
-    PLACE_MARKER_COLORS,
-    REMOTE_GRIPPER_CLOSE,
-    REMOTE_GRIPPER_USD_RELATIVE,
-)
-from vla_sim.demo_planning import GRIPPER_SPEED_RAD_S
-from vla_sim.remote_scene import (
+from vla_sim.joint_sync import LatestJointState
+from vla_sim.planning import GRIPPER_SPEED_RAD_S
+from vla_sim.scene import (
     bind_gripper_pad_visuals,
     configure_gripper_pads,
     hide_markers,
-    make_remote_scene_cfg,
+    make_scene_cfg,
     prepare_target_visuals,
     set_marker_material,
     set_plastic_material,
+    enable_extensions,
+    spawn_raw_and_assemble,
 )
-from vla_sim.scene import enable_extensions, spawn_raw_and_assemble
-from vla_sim.state_backend import PhysicsDriveBackend, StateBackend
 
 
 ARM_JOINT_NAMES = (
@@ -51,6 +51,51 @@ ARM_JOINT_NAMES = (
     "wrist_2_joint",
     "wrist_3_joint",
 )
+
+
+class StateBackend(ABC):
+    """Apply one authoritative robot state before each simulation step."""
+
+    @abstractmethod
+    def apply(self, controller: "RobotController", dt: float) -> None:
+        pass
+
+
+class PhysicsDriveBackend(StateBackend):
+    def apply(self, controller: "RobotController", dt: float) -> None:
+        del dt
+        controller.apply_physics_targets()
+
+
+class ExternalStateBackend(StateBackend, ABC):
+    """Read-only interface reserved for measured robot state."""
+
+
+class JointSyncBackend(ExternalStateBackend):
+    """Write only the latest valid external arm sample into Isaac."""
+
+    def __init__(self, source: LatestJointState):
+        self.source = source
+        self.last_snapshot = source.snapshot()
+        self.paused = False
+
+    @property
+    def status(self) -> dict:
+        snapshot = self.last_snapshot
+        return {
+            "state": "paused" if self.paused else snapshot.state,
+            "detail": "paused" if self.paused else snapshot.detail,
+            "age_seconds": snapshot.age_seconds,
+            "received_at": snapshot.received_at,
+        }
+
+    def apply(self, controller: "RobotController", dt: float) -> None:
+        del dt
+        self.last_snapshot = self.source.snapshot()
+        if self.paused or not self.last_snapshot.is_live:
+            return
+        if self.last_snapshot.positions is not None:
+            controller.write_measured_arm_state(self.last_snapshot.positions)
 
 
 @dataclass(frozen=True)
@@ -158,7 +203,7 @@ class RobotController:
         """
         logical = float(np.clip(command, 0.0, 1.0))
         target = float(
-            GRIPPER_OPEN + logical * (REMOTE_GRIPPER_CLOSE - GRIPPER_OPEN)
+            GRIPPER_OPEN + logical * (GRIPPER_CLOSE - GRIPPER_OPEN)
         )
         if rate_limit:
             if dt is None:
@@ -169,7 +214,7 @@ class RobotController:
                     self._physical_gripper_command
                     + np.clip(target - self._physical_gripper_command, -step, step),
                     GRIPPER_OPEN,
-                    REMOTE_GRIPPER_CLOSE,
+                    GRIPPER_CLOSE,
                 )
             )
         self._logical_gripper_command = logical
@@ -254,7 +299,7 @@ class SimulationRuntime:
             "isaacsim.core.throttling", False
         )
         log(f"isaacsim.core.throttling disabled = {disabled}")
-        spawn_raw_and_assemble(gripper_usd_relative=REMOTE_GRIPPER_USD_RELATIVE)
+        spawn_raw_and_assemble(gripper_usd_relative=GRIPPER_USD_RELATIVE)
         sim_utils.modify_articulation_root_properties(
             "/World/Robot",
             sim_utils.ArticulationRootPropertiesCfg(
@@ -269,7 +314,7 @@ class SimulationRuntime:
             sim_utils.SimulationCfg(device=self.options.device, dt=PHYSICS_DT)
         )
         self.scene = InteractiveScene(
-            make_remote_scene_cfg(
+            make_scene_cfg(
                 num_envs=1,
                 env_spacing=2.0,
                 stream_width=self.options.stream_width,
@@ -315,14 +360,14 @@ class SimulationRuntime:
         return self
 
     def reset_targets(self) -> None:
-        """Restore the fixed canonical remote object composition."""
+        """Restore the fixed canonical object composition."""
         if self.scene is None:
             raise RuntimeError("SimulationRuntime.start() has not completed")
-        from vla_sim.remote_config import REMOTE_TARGET_KEYS, REMOTE_TARGETS
+        from vla_sim.config import TARGET_KEYS, TARGETS
 
-        for name in REMOTE_TARGET_KEYS:
-            pos = REMOTE_TARGETS[name]["spawn_pos"]
-            rot = REMOTE_TARGETS[name]["spawn_rot"]
+        for name in TARGET_KEYS:
+            pos = TARGETS[name]["spawn_pos"]
+            rot = TARGETS[name]["spawn_rot"]
             obj = self.scene[name]
             obj.write_root_pose_to_sim(
                 torch.tensor([[*pos, *rot]], device=self.device, dtype=torch.float32)

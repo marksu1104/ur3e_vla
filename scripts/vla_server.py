@@ -1,8 +1,8 @@
 """FastAPI server for OpenVLA inference."""
 
-import argparse
 import base64
 import io
+import argparse
 import json
 from pathlib import Path
 import time
@@ -88,7 +88,7 @@ def load_local_dataset_statistics(model_path: str) -> Optional[dict]:
 def load_model():
     global MODEL, PROCESSOR, DEVICE
 
-    print(f"[VLA Server] Loading model")
+    print("[VLA Server] Loading model")
     print(f"[VLA Server] Device: {ARGS.device}")
     t0 = time.monotonic()
 

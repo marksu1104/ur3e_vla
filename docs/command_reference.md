@@ -29,9 +29,9 @@ ssh -N -o ExitOnForwardFailure=yes -o ServerAliveInterval=15 \
 `test_bridge_client.py` is only a manual protocol check:
 
 ```console
-python3 scripts/test_bridge_client.py --server http://127.0.0.1:18100 --watch
-python3 scripts/test_bridge_client.py --server http://127.0.0.1:18100 --obj 0 --dest 0
-python3 scripts/test_bridge_client.py --server http://127.0.0.1:18100 --control reset
+python3 scripts/tools/test_bridge_client.py --server http://127.0.0.1:18100 --watch
+python3 scripts/tools/test_bridge_client.py --server http://127.0.0.1:18100 --obj 0 --dest 0
+python3 scripts/tools/test_bridge_client.py --server http://127.0.0.1:18100 --control reset
 ```
 
 ## Canonical H5 Collection
@@ -45,7 +45,7 @@ with legacy mug H5 data.
   --headless --enable_cameras \
   --target red_mug \
   --episodes 500 --max-episodes-tried 700 \
-  --output-dir ~/IsaacLab/ur3e_vla/outputs/h5/canonical_remote_red_mug \
+  --output-dir ~/IsaacLab/ur3e_vla/outputs/h5/canonical_scene_red_mug \
   --overwrite
 ```
 
@@ -74,23 +74,24 @@ canonical policy camera:
   --action-scale 0.5 --vla-step-interval 12 --max-steps 6000
 ```
 
-## Read-Only Real-to-Sim Mirror
+## Read-Only Real-to-Sim Sync
 
 This command consumes `/joint_states` by joint name and never publishes Servo,
 trajectory, or other real-robot motion commands:
 
 ```bash
-./isaaclab.sh -p ./ur3e_vla/scripts/run_real_mirror.py \
+./isaaclab.sh -p ./ur3e_vla/scripts/sync_real_to_sim.py \
   --headless --enable_cameras \
   --joint-states-topic /joint_states \
   --joint-state-timeout 0.5
 ```
 
-The mirror also exposes the normal YOLO bridge stream on port 8100. Use
+The sync runner also exposes the normal YOLO bridge stream on port 8100. Use
 `/control` with `pause`, `resume`, or `reset` for the virtual scene only.
 
-## Legacy Experimental Tools
+## Multi-Env Collection
 
-`scripts/multi_env/` and `scripts/capture_yolo_objects.py` use the previous
-scene and mimic-gripper configuration. Keep their outputs separate from
-canonical H5 data.
+`scripts/collect_demos_multi_env.py` uses the canonical three-object config
+and official Robotiq `finger_joint`. It loads the assembled USD required for
+vectorized environments. Rebuild it with `scripts/tools/export_robot_asset.py` after
+robot or gripper changes.

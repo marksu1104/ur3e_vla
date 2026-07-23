@@ -11,7 +11,9 @@ WRIST_CAMERA_HEIGHT = 480
 
 # USD asset paths relative to ISAAC_NUCLEUS_DIR.
 UR3E_USD_RELATIVE = "Robots/UniversalRobots/ur3e/ur3e.usd"
-GRIPPER_USD_RELATIVE = "Robots/Robotiq/2F-140/2f140_instanceable.usd"
+GRIPPER_USD_RELATIVE = (
+    "Robots/Robotiq/2F-140/Robotiq_2F_140_physics_edit.usd"
+)
 YCB_NUCLEUS_PATH = "Props/YCB/Axis_Aligned"
 
 # Stage prim paths.
@@ -57,7 +59,7 @@ EE_BODY_NAME = "wrist_3_link"
 EE_ORIENT_DOWN = (0.0, 1.0, 0.0, 0.0)
 
 GRIPPER_OPEN = 0.0
-GRIPPER_CLOSE = 0.26
+GRIPPER_CLOSE = 0.785398
 
 HOME_POS = (0.30, 0.13, 1.35)
 HOME_Q = [0.57, -1.57, 1.57, -1.57, -1.57, 0.00]
@@ -73,100 +75,94 @@ CAMERA_MAIN_POS = (0.6, 0.6, 1.5)
 CAMERA_MAIN_ROT = (0.28, 0.13, 0.43, 0.85)
 CAMERA_MAIN_FOCAL = 11.0
 
-# Small discrete view set for dataset collection. The first entry matches the
-# standard camera used by run_vla; collect_demos can sample these per episode.
-CAMERA_MAIN_VIEW_PRESETS = (
-    {"name": "standard", "pos": CAMERA_MAIN_POS, "rot": CAMERA_MAIN_ROT},
-    {"name": "left", "pos": (0.54, 0.66, 1.50), "rot": (0.29, 0.12, 0.39, 0.87)},
-    {"name": "right", "pos": (0.66, 0.54, 1.50), "rot": (0.27, 0.15, 0.47, 0.83)},
-    {"name": "high", "pos": (0.58, 0.58, 1.60), "rot": (0.34, 0.15, 0.42, 0.83)},
+# Persistent bridge and YOLO stream.
+BRIDGE_HOST = "127.0.0.1"
+BRIDGE_PORT = 8100
+STREAM_WIDTH = 1280
+STREAM_HEIGHT = 720
+STREAM_EVERY_N_STEPS = 2
+STREAM_JPEG_QUALITY = 85
+MAX_TRIAL_SECONDS = 45.0
+
+YOLO_CAMERA_POS = (0.13, 0.84, 1.31)
+YOLO_CAMERA_ROT = (0.0, 0.0, 0.5671412673963498, 0.8236205332652058)
+YOLO_CAMERA_FOCAL = 21.0
+YOLO_VISIBILITY_MARGIN_PX = 12
+YOLO_MIN_VISIBLE_PIXELS = 100
+YOLO_TARGET_ROIS = {
+    "spoon": (0.17, 0.45, 0.33, 0.73),
+    "red_mug": (0.35, 0.38, 0.57, 0.72),
+    "bowl": (0.57, 0.44, 0.84, 0.74),
+}
+YOLO_GOAL_ROIS = (
+    (0.09, 0.40, 0.23, 0.51),
+    (0.16, 0.32, 0.28, 0.42),
+    (0.27, 0.36, 0.39, 0.46),
 )
 
-# YCB target objects.
+# Canonical left-to-right objects in camera_yolo.
 TARGETS = {
-    "banana": {
-        "usd_relative": f"{YCB_NUCLEUS_PATH}/011_banana.usd",
-        "spawn_pos": (0.5, 0.0, 1.00),
-        "spawn_rot": (1.0, 0.0, 0.0, 0.0),
-        "mass": 0.15,
-        "grasp_z": 0.180,
-        "hover_z": 0.280,
-        "y_nudge": 0.000,
-        "size": (0.20, 0.06, 0.07),
-    },
     "red_mug": {
         "usd_relative": f"{YCB_NUCLEUS_PATH}/025_mug.usd",
         "collision_usd": "025_mug_collision.usda",
-        "spawn_pos": (0.10, 0.30, 1.20),
+        "spawn_pos": (0.150, 0.390, 1.200),
         "spawn_rot": (0.7071, -0.7071, 0.0, 0.0),
-        "pos_randomization": {
-            "x": (-0.025, 0.025),
-            "y": (-0.030, 0.030),
-        },
-        "mass": 0.20,
+        "mass": 0.200,
+        "color": (1.00, 0.20, 0.20),
         "grasp_z": 0.195,
         "hover_z": 0.295,
-        "lift_z": 0.295,
+        "x_nudge": 0.0,
+        "y_nudge": 0.0,
         "align_gripper_to_yaw": True,
         "grasp_yaw_offsets": (0.0, 3.1416),
         "grasp_yaw_jitter": (-0.15, 0.15),
         "gripper_yaw_offset": 0.0,
+        "min_carry_z": 1.360,
         "carry_extra_z": 0.045,
-        "min_carry_z": 1.36,
-        "x_nudge": 0.000,
-        "y_nudge": 0.000,
-        "grasp_randomization": {
-            "name": "body",
-            "grasp_z": (0.180, 0.210),
-            "hover_z": (0.270, 0.320),
-            "lift_z": (0.270, 0.320),
-            "x_nudge": (-0.005, 0.005),
-            "y_nudge": (-0.005, 0.005),
-        },
-        "size": (0.08, 0.08, 0.08),
-        "color": (1, 0.2, 0.2),
     },
-    "blue_mug": {
-        "usd_relative": f"{YCB_NUCLEUS_PATH}/025_mug.usd",
-        "collision_usd": "025_mug_collision.usda",
-        "spawn_pos": (0.30, 0.30, 1.20),
-        "spawn_rot": (0.7071, -0.7071, 0.0, 0.0),
-        "pos_randomization": {
-            "x": (-0.020, 0.020),
-            "y": (-0.025, 0.025),
-        },
-        "mass": 0.20,
-        "grasp_z": 0.195,
+    "spoon": {
+        "collision_usd": "spoon_convexdecomposition_collision.usda",
+        "scale": 0.670,
+        "spawn_pos": (0.290, 0.390, 1.080),
+        "spawn_rot": (0.0, 0.0, 0.0, 1.0),
+        "mass": 0.060,
+        "color": (0.08, 0.30, 0.90),
+        "grasp_z": 0.215,
         "hover_z": 0.295,
-        "lift_z": 0.295,
+        "x_nudge": 0.0,
+        "y_nudge": -0.060,
         "align_gripper_to_yaw": True,
         "grasp_yaw_offsets": (0.0, 3.1416),
-        "grasp_yaw_jitter": (-0.15, 0.15),
-        "gripper_yaw_offset": 0.0,
-        "carry_extra_z": 0.035,
-        "min_carry_z": 1.34,
-        "x_nudge": 0.000,
-        "y_nudge": 0.000,
-        "grasp_randomization": {
-            "name": "body",
-            "grasp_z": (0.180, 0.210),
-            "hover_z": (0.270, 0.320),
-            "lift_z": (0.270, 0.320),
-            "x_nudge": (-0.005, 0.005),
-            "y_nudge": (-0.005, 0.005),
-        },
-        "size": (0.08, 0.08, 0.08),
-        "color": (0.02, 0.18, 0.85),
+        "grasp_yaw_jitter": (0.0, 0.0),
+        "gripper_yaw_offset": 1.5708,
+        "min_carry_z": 1.340,
+        "carry_extra_z": 0.030,
+    },
+    "bowl": {
+        "usd_relative": f"{YCB_NUCLEUS_PATH}/024_bowl.usd",
+        "collision_usd": "024_bowl_baked_collision.usda",
+        "scale": 0.800,
+        "spawn_pos": (-0.010, 0.400, 1.150),
+        "spawn_rot": (0.7071, -0.7071, 0.0, 0.0),
+        "mass": 0.250,
+        "color": (0.10, 0.12, 0.14),
+        "grasp_z": 0.215,
+        "hover_z": 0.350,
+        "x_nudge": 0.0,
+        "y_nudge": -0.055,
+        "align_gripper_to_yaw": False,
+        "min_carry_z": 1.320,
+        "carry_extra_z": 0.030,
     },
 }
+TARGET_KEYS = ("spoon", "red_mug", "bowl")
+TASK_INDEX_MAP = dict(enumerate(TARGET_KEYS))
 
-# Software mimic for 2f140_instanceable.usd.
-# (sign, lower_bound, upper_bound) per joint
-GRIPPER_MIMIC_MAP = {
-    "finger_joint": (1.0, -0.02, 0.75),
-    "left_inner_knuckle_joint": (1.0, -0.02, 0.02),
-    "left_inner_finger_joint":   (-1.0, -0.75, 0.02),
-    "right_outer_knuckle_joint": (-1.0, -0.75, 0.02),
-    "right_inner_knuckle_joint": (-1.0, -0.02, 0.02),
-    "right_inner_finger_joint": (1.0, -0.02, 0.75),
-}
+PLACE_POSITIONS = ((0.37, 0.13), (0.34, -0.025), (0.21, 0.045))
+PLACE_MARKER_COLORS = (
+    (0.05, 0.95, 0.10),
+    (0.95, 0.05, 0.85),
+    (1.00, 0.30, 0.02),
+)
+PLACE_MARKER_RADIUS = 0.045
+PLACE_MARKER_THICKNESS = 0.002

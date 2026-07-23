@@ -15,7 +15,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 _extra = argparse.ArgumentParser(add_help=False, allow_abbrev=False)
 _extra.add_argument("--episodes", type=int, default=5)
-_extra.add_argument("--output-dir", default="outputs/h5/canonical_remote")
+_extra.add_argument("--output-dir", default="outputs/h5/canonical_scene")
 _extra.add_argument("--max-episodes-tried", type=int, default=0)
 _extra.add_argument("--seed", type=int, default=42)
 _extra.add_argument("--overwrite", action="store_true")
@@ -31,16 +31,13 @@ from vla_sim.isaac_app import args_cli, boot_app, close_app, log
 app = boot_app()
 
 from vla_sim.actions import PoseTrajectoryPlayer, compute_action_from_ee_poses
+from vla_sim.config import PLACE_POSITIONS, TARGETS
 from vla_sim.data_collector import EpisodeBuffer, append_episode_h5
-from vla_sim.demo_planning import (
-    build_canonical_pick_place_trajectory,
-    detect_success,
-)
-from vla_sim.remote_config import PLACE_POSITIONS, REMOTE_TARGETS
+from vla_sim.planning import build_pick_place_trajectory, detect_success
 from vla_sim.runtime import RuntimeOptions, SimulationRuntime
 
 
-SCENE_PROFILE = "canonical_remote_v1"
+SCENE_PROFILE = "canonical_scene_v1"
 RECORD_EVERY_N_STEPS = 12  # 60 Hz simulation / 12 = 5 Hz policy data.
 
 
@@ -69,8 +66,8 @@ def run_one_episode(
     target_resting = target.data.root_pos_w[0].cpu().numpy()
     target_rot = target.data.root_state_w[0, 3:7].cpu().numpy()
     target_initial_z = float(target_resting[2])
-    trajectory = build_canonical_pick_place_trajectory(
-        REMOTE_TARGETS[target_name], target_resting, target_rot, place_xy
+    trajectory = build_pick_place_trajectory(
+        TARGETS[target_name], target_resting, target_rot, place_xy
     )
     player = PoseTrajectoryPlayer(trajectory, device=runtime.device)
     buffer = EpisodeBuffer([], [], [], [], [], [], [])
@@ -156,10 +153,10 @@ def run_one_episode(
 
 def main() -> None:
     target_name = args_cli.target
-    if target_name not in REMOTE_TARGETS:
+    if target_name not in TARGETS:
         raise ValueError(
             "canonical collection supports "
-            f"{tuple(REMOTE_TARGETS)}; received {target_name!r}"
+            f"{tuple(TARGETS)}; received {target_name!r}"
         )
     if _extra_args.episodes < 1:
         raise ValueError("--episodes must be at least 1")

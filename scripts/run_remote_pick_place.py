@@ -28,26 +28,23 @@ app = boot_app()
 import numpy as np
 from vla_sim.actions import PoseTrajectoryPlayer
 from vla_sim.config import (
-    EE_ORIENT_DOWN,
-    GRIPPER_OPEN,
-    HOME_POS,
-)
-from vla_sim.remote_config import (
     BRIDGE_HOST,
     BRIDGE_PORT,
+    EE_ORIENT_DOWN,
+    GRIPPER_CLOSE,
+    GRIPPER_OPEN,
+    HOME_POS,
     MAX_TRIAL_SECONDS,
     PLACE_POSITIONS,
-    REMOTE_GRIPPER_CLOSE,
-    REMOTE_TARGET_KEYS,
-    REMOTE_TARGETS,
     STREAM_EVERY_N_STEPS,
     STREAM_JPEG_QUALITY,
+    TARGET_KEYS,
+    TARGETS,
     TASK_INDEX_MAP,
 )
-from vla_sim.demo_planning import detect_success
-from vla_sim.remote_bridge import RemoteBridge
-from vla_sim.demo_planning import build_canonical_pick_place_trajectory
-from vla_sim.remote_visibility import goal_visibility_report, object_visibility_report
+from vla_sim.bridge import BridgeServer
+from vla_sim.planning import build_pick_place_trajectory, detect_success
+from vla_sim.visibility import goal_visibility_report, object_visibility_report
 from vla_sim.runtime import RuntimeOptions, SimulationRuntime
 
 
@@ -71,7 +68,7 @@ def main() -> None:
     if stream_every < 1:
         raise ValueError("--stream-every-n-steps must be at least 1")
 
-    bridge = RemoteBridge(
+    bridge = BridgeServer(
         TASK_INDEX_MAP,
         len(PLACE_POSITIONS),
         host=BRIDGE_HOST,
@@ -129,8 +126,8 @@ def main() -> None:
                     max_gripper_command = float(GRIPPER_OPEN)
                     max_finger_joint = float(GRIPPER_OPEN)
                     run_t = 0.0
-                    target_info = REMOTE_TARGETS[command["object"]]
-                    trajectory = build_canonical_pick_place_trajectory(
+                    target_info = TARGETS[command["object"]]
+                    trajectory = build_pick_place_trajectory(
                         target_info,
                         resting,
                         rotation,
@@ -228,7 +225,7 @@ def main() -> None:
                     )
                     detail.update(
                         {
-                            "gripper_close_target": float(REMOTE_GRIPPER_CLOSE),
+                            "gripper_close_target": float(GRIPPER_CLOSE),
                             "max_gripper_command": float(max_gripper_command),
                             "max_finger_joint": float(max_finger_joint),
                         }
@@ -257,7 +254,7 @@ def main() -> None:
                         .numpy()
                         .round(5)
                         .tolist()
-                        for name in REMOTE_TARGET_KEYS
+                        for name in TARGET_KEYS
                     }
                     waiting_finger_q = controller.finger_position
                     yolo_visibility = object_visibility_report(scene["camera_yolo"])
