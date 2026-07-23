@@ -1,14 +1,176 @@
-"""Remote-scene materials, visuals, and Robotiq pad setup."""
+"""Canonical three-object remote scene and its USD presentation helpers."""
 
 from __future__ import annotations
 
 import numpy as np
 
 import isaaclab.sim as sim_utils
+from isaaclab.actuators import ImplicitActuatorCfg
+from isaaclab.assets import ArticulationCfg, AssetBaseCfg
+from isaaclab.scene import InteractiveSceneCfg
+from isaaclab.sensors.camera import CameraCfg
+from isaaclab.utils import configclass
 from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR
 
 from vla_sim.isaac_app import log
-from vla_sim.remote_config import REMOTE_TARGETS
+from vla_sim.config import (
+    BACKDROP_BACK_POS,
+    BACKDROP_BACK_SIZE,
+    BACKDROP_SIDE_POS,
+    BACKDROP_SIDE_SIZE,
+    ROBOT_BASE_POS,
+    ROBOT_BASE_ROT,
+    TABLE_A_POS,
+    TABLE_B_POS,
+    TABLE_MAT_A_POS,
+    TABLE_MAT_B_POS,
+    TABLE_MAT_SIZE,
+)
+from vla_sim.remote_config import (
+    PLACE_MARKER_RADIUS,
+    PLACE_MARKER_THICKNESS,
+    PLACE_POSITIONS,
+    REMOTE_TARGETS,
+    STREAM_HEIGHT,
+    STREAM_WIDTH,
+    YOLO_CAMERA_FOCAL,
+    YOLO_CAMERA_POS,
+    YOLO_CAMERA_ROT,
+)
+from vla_sim.scene import (
+    make_static_cuboid_cfg,
+    make_table_cfg,
+    make_target_cfg,
+)
+
+
+def _marker_cfg(index: int) -> AssetBaseCfg:
+    """Create a collision-free visual disk flush with the table mat."""
+    x, y = PLACE_POSITIONS[index]
+    table_surface_z = TABLE_MAT_A_POS[2] + 0.5 * TABLE_MAT_SIZE[2]
+    marker_center_z = table_surface_z + 0.5 * PLACE_MARKER_THICKNESS
+    return AssetBaseCfg(
+        prim_path=f"/World/MarkerP{index}",
+        spawn=sim_utils.MeshCylinderCfg(
+            radius=PLACE_MARKER_RADIUS,
+            height=PLACE_MARKER_THICKNESS,
+        ),
+        init_state=AssetBaseCfg.InitialStateCfg(pos=(x, y, marker_center_z)),
+    )
+
+
+def _remote_target_cfg(name: str):
+    return make_target_cfg(name, REMOTE_TARGETS[name])
+
+
+@configclass
+class RemoteSceneCfg(InteractiveSceneCfg):
+    """The canonical single-arm scene for remote and future shared runtimes."""
+
+    robot = ArticulationCfg(
+        prim_path="/World/Robot",
+        spawn=None,
+        init_state=ArticulationCfg.InitialStateCfg(
+            pos=ROBOT_BASE_POS,
+            rot=ROBOT_BASE_ROT,
+        ),
+        actuators={
+            "arm": ImplicitActuatorCfg(
+                joint_names_expr=[
+                    "shoulder_pan_joint",
+                    "shoulder_lift_joint",
+                    "elbow_joint",
+                    "wrist_1_joint",
+                    "wrist_2_joint",
+                    "wrist_3_joint",
+                ],
+                stiffness=10000.0,
+                damping=500.0,
+                effort_limit_sim=150.0,
+                velocity_limit_sim=3.14,
+            ),
+            # Only finger_joint is actively commanded; the closed linkage
+            # joints remain compliant and passive in the official physics USD.
+            "gripper_drive": ImplicitActuatorCfg(
+                joint_names_expr=["finger_joint"],
+                stiffness=11.25,
+                damping=0.1,
+                effort_limit_sim=10.0,
+                velocity_limit_sim=1.0,
+            ),
+            "gripper_finger": ImplicitActuatorCfg(
+                joint_names_expr=[".*_inner_finger_joint"],
+                stiffness=0.2,
+                damping=0.001,
+                effort_limit_sim=1.0,
+                velocity_limit_sim=1.0,
+            ),
+            "gripper_passive": ImplicitActuatorCfg(
+                joint_names_expr=[
+                    ".*_inner_finger_pad_joint",
+                    ".*_outer_finger_joint",
+                    "right_outer_knuckle_joint",
+                ],
+                stiffness=0.0,
+                damping=0.0,
+                effort_limit_sim=1.0,
+                velocity_limit_sim=1.0,
+            ),
+        },
+    )
+    table_a = make_table_cfg("/World/TableA", TABLE_A_POS)
+    table_b = make_table_cfg("/World/TableB", TABLE_B_POS)
+    mat_a = make_static_cuboid_cfg("/World/MatA", TABLE_MAT_SIZE, TABLE_MAT_A_POS)
+    mat_b = make_static_cuboid_cfg("/World/MatB", TABLE_MAT_SIZE, TABLE_MAT_B_POS)
+    backdrop_back = make_static_cuboid_cfg(
+        "/World/BackdropBack", BACKDROP_BACK_SIZE, BACKDROP_BACK_POS
+    )
+    backdrop_side = make_static_cuboid_cfg(
+        "/World/BackdropSide", BACKDROP_SIDE_SIZE, BACKDROP_SIDE_POS
+    )
+    red_mug = _remote_target_cfg("red_mug")
+    spoon = _remote_target_cfg("spoon")
+    bowl = _remote_target_cfg("bowl")
+    marker_p0 = _marker_cfg(0)
+    marker_p1 = _marker_cfg(1)
+    marker_p2 = _marker_cfg(2)
+    camera_yolo = CameraCfg(
+        prim_path="/World/CameraYolo",
+        update_period=0.0,
+        height=STREAM_HEIGHT,
+        width=STREAM_WIDTH,
+        data_types=["rgb"],
+        spawn=sim_utils.PinholeCameraCfg(focal_length=YOLO_CAMERA_FOCAL),
+        offset=CameraCfg.OffsetCfg(
+            pos=YOLO_CAMERA_POS, rot=YOLO_CAMERA_ROT, convention="opengl"
+        ),
+    )
+
+
+def make_remote_scene_cfg(
+    *,
+    num_envs: int = 1,
+    env_spacing: float = 2.0,
+    stream_width: int | None = None,
+    stream_height: int | None = None,
+) -> RemoteSceneCfg:
+    """Instantiate the canonical scene with optional bridge stream dimensions."""
+    cfg = RemoteSceneCfg(num_envs=num_envs, env_spacing=env_spacing)
+    if stream_width is not None:
+        cfg.camera_yolo.width = stream_width
+    if stream_height is not None:
+        cfg.camera_yolo.height = stream_height
+    return cfg
+
+
+def hide_markers(stage) -> None:
+    """Keep placement markers hidden in every normal bridge state."""
+    from pxr import UsdGeom
+
+    for index in range(len(PLACE_POSITIONS)):
+        prim = stage.GetPrimAtPath(f"/World/MarkerP{index}")
+        if prim.IsValid():
+            UsdGeom.Imageable(prim).GetVisibilityAttr().Set(UsdGeom.Tokens.invisible)
 
 
 def set_plastic_material(stage, prim_path: str, color: tuple[float, float, float]) -> None:

@@ -31,19 +31,11 @@ import torch
 import omni.usd
 import omni.kit.app
 import isaaclab.sim as sim_utils
-from isaaclab.assets import ArticulationCfg, AssetBaseCfg
-from isaaclab.actuators import ImplicitActuatorCfg
 from isaaclab.controllers import DifferentialIKController, DifferentialIKControllerCfg
-from isaaclab.scene import InteractiveScene, InteractiveSceneCfg
-from isaaclab.sensors.camera import CameraCfg
-from isaaclab.utils import configclass
+from isaaclab.scene import InteractiveScene
 
 from vla_sim.actions import PoseTrajectoryPlayer
 from vla_sim.config import (
-    BACKDROP_BACK_POS,
-    BACKDROP_BACK_SIZE,
-    BACKDROP_SIDE_POS,
-    BACKDROP_SIDE_SIZE,
     EE_BODY_NAME,
     EE_ORIENT_DOWN,
     GRIPPER_OPEN,
@@ -52,32 +44,20 @@ from vla_sim.config import (
     PHYSICS_DT,
     ROBOT_BASE_POS,
     ROBOT_BASE_ROT,
-    TABLE_A_POS,
-    TABLE_B_POS,
-    TABLE_MAT_A_POS,
-    TABLE_MAT_B_POS,
-    TABLE_MAT_SIZE,
 )
 from vla_sim.remote_config import (
     BRIDGE_HOST,
     BRIDGE_PORT,
     MAX_TRIAL_SECONDS,
     PLACE_MARKER_COLORS,
-    PLACE_MARKER_RADIUS,
-    PLACE_MARKER_THICKNESS,
     PLACE_POSITIONS,
     REMOTE_GRIPPER_CLOSE,
     REMOTE_GRIPPER_USD_RELATIVE,
     REMOTE_TARGET_KEYS,
     REMOTE_TARGETS,
     STREAM_EVERY_N_STEPS,
-    STREAM_HEIGHT,
     STREAM_JPEG_QUALITY,
-    STREAM_WIDTH,
     TASK_INDEX_MAP,
-    YOLO_CAMERA_FOCAL,
-    YOLO_CAMERA_POS,
-    YOLO_CAMERA_ROT,
 )
 from vla_sim.demo_planning import detect_success
 from vla_sim.remote_bridge import RemoteBridge
@@ -85,142 +65,14 @@ from vla_sim.remote_planning import GRIPPER_SPEED_RAD_S, build_pick_place_trajec
 from vla_sim.remote_scene import (
     bind_gripper_pad_visuals,
     configure_gripper_pads,
+    hide_markers,
+    make_remote_scene_cfg,
     prepare_target_visuals,
     set_marker_material,
     set_plastic_material,
 )
 from vla_sim.remote_visibility import goal_visibility_report, object_visibility_report
-from vla_sim.scene import (
-    enable_extensions,
-    make_static_cuboid_cfg,
-    make_table_cfg,
-    make_target_cfg,
-    spawn_raw_and_assemble,
-)
-
-def _marker_cfg(index: int) -> AssetBaseCfg:
-    """Create a collision-free, smooth visual disk flush with the table mat."""
-    x, y = PLACE_POSITIONS[index]
-    table_surface_z = TABLE_MAT_A_POS[2] + 0.5 * TABLE_MAT_SIZE[2]
-    marker_center_z = table_surface_z + 0.5 * PLACE_MARKER_THICKNESS
-    return AssetBaseCfg(
-        prim_path=f"/World/MarkerP{index}",
-        spawn=sim_utils.MeshCylinderCfg(
-            radius=PLACE_MARKER_RADIUS,
-            height=PLACE_MARKER_THICKNESS,
-        ),
-        init_state=AssetBaseCfg.InitialStateCfg(pos=(x, y, marker_center_z)),
-    )
-
-
-def _remote_target_cfg(name: str):
-    return make_target_cfg(name, REMOTE_TARGETS[name])
-
-
-@configclass
-class RemoteSceneCfg(InteractiveSceneCfg):
-    """The normal single-arm scene with only the remote-bridge task objects."""
-
-    robot = ArticulationCfg(
-        prim_path="/World/Robot",
-        spawn=None,
-        init_state=ArticulationCfg.InitialStateCfg(
-            pos=ROBOT_BASE_POS,
-            rot=ROBOT_BASE_ROT,
-        ),
-        actuators={
-            "arm": ImplicitActuatorCfg(
-                joint_names_expr=[
-                    "shoulder_pan_joint",
-                    "shoulder_lift_joint",
-                    "elbow_joint",
-                    "wrist_1_joint",
-                    "wrist_2_joint",
-                    "wrist_3_joint",
-                ],
-                stiffness=10000.0,
-                damping=500.0,
-                effort_limit_sim=150.0,
-                velocity_limit_sim=3.14,
-            ),
-            # Match Isaac Lab's official UR10e + Robotiq 2F-140 actuator
-            # configuration. Only finger_joint is actively commanded; the
-            # remaining closed-loop linkage joints must stay compliant/passive.
-            "gripper_drive": ImplicitActuatorCfg(
-                joint_names_expr=["finger_joint"],
-                stiffness=11.25,
-                damping=0.1,
-                effort_limit_sim=10.0,
-                velocity_limit_sim=1.0,
-            ),
-            "gripper_finger": ImplicitActuatorCfg(
-                joint_names_expr=[".*_inner_finger_joint"],
-                stiffness=0.2,
-                damping=0.001,
-                effort_limit_sim=1.0,
-                velocity_limit_sim=1.0,
-            ),
-            "gripper_passive": ImplicitActuatorCfg(
-                joint_names_expr=[
-                    ".*_inner_finger_pad_joint",
-                    ".*_outer_finger_joint",
-                    "right_outer_knuckle_joint",
-                ],
-                stiffness=0.0,
-                damping=0.0,
-                effort_limit_sim=1.0,
-                velocity_limit_sim=1.0,
-            ),
-        },
-    )
-    table_a = make_table_cfg("/World/TableA", TABLE_A_POS)
-    table_b = make_table_cfg("/World/TableB", TABLE_B_POS)
-    mat_a = make_static_cuboid_cfg("/World/MatA", TABLE_MAT_SIZE, TABLE_MAT_A_POS)
-    mat_b = make_static_cuboid_cfg("/World/MatB", TABLE_MAT_SIZE, TABLE_MAT_B_POS)
-    backdrop_back = make_static_cuboid_cfg(
-        "/World/BackdropBack", BACKDROP_BACK_SIZE, BACKDROP_BACK_POS
-    )
-    backdrop_side = make_static_cuboid_cfg(
-        "/World/BackdropSide", BACKDROP_SIDE_SIZE, BACKDROP_SIDE_POS
-    )
-    red_mug = _remote_target_cfg("red_mug")
-    spoon = _remote_target_cfg("spoon")
-    bowl = _remote_target_cfg("bowl")
-    marker_p0 = _marker_cfg(0)
-    marker_p1 = _marker_cfg(1)
-    marker_p2 = _marker_cfg(2)
-
-    camera_yolo = CameraCfg(
-        prim_path="/World/CameraYolo",
-        update_period=0.0,
-        height=(
-            STREAM_HEIGHT
-            if _extra_args.stream_height is None
-            else _extra_args.stream_height
-        ),
-        width=(
-            STREAM_WIDTH
-            if _extra_args.stream_width is None
-            else _extra_args.stream_width
-        ),
-        data_types=["rgb"],
-        spawn=sim_utils.PinholeCameraCfg(focal_length=YOLO_CAMERA_FOCAL),
-        offset=CameraCfg.OffsetCfg(
-            pos=YOLO_CAMERA_POS, rot=YOLO_CAMERA_ROT, convention="opengl"
-        ),
-    )
-
-
-def _hide_markers(stage) -> None:
-    """Keep placement markers hidden in every bridge state."""
-    from pxr import UsdGeom
-
-    for index in range(len(PLACE_POSITIONS)):
-        prim = stage.GetPrimAtPath(f"/World/MarkerP{index}")
-        if prim.IsValid():
-            UsdGeom.Imageable(prim).GetVisibilityAttr().Set(
-                UsdGeom.Tokens.invisible
-            )
+from vla_sim.scene import enable_extensions, spawn_raw_and_assemble
 
 
 def _reset_remote_targets(scene, device: str) -> None:
@@ -307,7 +159,14 @@ def main() -> None:
         sim = sim_utils.SimulationContext(
             sim_utils.SimulationCfg(device="cuda:0", dt=PHYSICS_DT)
         )
-        scene = InteractiveScene(RemoteSceneCfg(num_envs=1, env_spacing=2.0))
+        scene = InteractiveScene(
+            make_remote_scene_cfg(
+                num_envs=1,
+                env_spacing=2.0,
+                stream_width=_extra_args.stream_width,
+                stream_height=_extra_args.stream_height,
+            )
+        )
         stage = omni.usd.get_context().get_stage()
         log("Applying final scene materials before camera initialization...")
         for path, color in {
@@ -325,7 +184,7 @@ def main() -> None:
         for index, color in enumerate(PLACE_MARKER_COLORS):
             set_marker_material(stage, f"/World/MarkerP{index}", color)
         if not _extra_args.show_markers:
-            _hide_markers(stage)
+            hide_markers(stage)
         log("Final materials applied.")
         try:
             from omni.kit.viewport.utility import get_active_viewport
