@@ -30,6 +30,8 @@ randomization is experimental and only enabled when explicitly requested with
 scripts/
   collect_demos.py        Collect scripted H5 demonstrations.
   run_vla.py              Run Isaac Lab simulation with VLA actions.
+  run_remote_pick_place.py  Serve the remote three-object scripted scene.
+  test_bridge_client.py   Temporarily emulate the future Unity bridge client.
   real_vla_servo.py       Send real-camera VLA twist commands through MoveIt Servo.
   check_vla_prediction.py Compare server predictions with recorded H5 actions.
   subset_h5_demos.py      Create smaller H5 subsets.
@@ -43,6 +45,7 @@ docs/
   command_reference.md          Complete customizable command examples.
   project_layout.md             Artifact/storage policy.
   real_robot_vla_runbook.md     Real UR3e test procedure.
+  remote_bridge.md              Remote Unity/Python bridge workflow.
 
 vla_sim/
   isaac_app.py            Shared Isaac Lab startup and shutdown handling.
@@ -53,6 +56,11 @@ vla_sim/
   demo_planning.py        Scene randomization, grasp planning, and success checks.
   data_collector.py       Episode buffers and H5 export.
   vla_client.py           Lightweight VLA HTTP client.
+  remote_config.py        Remote-only objects, camera, and bridge settings.
+  remote_bridge.py        Persistent HTTP/WebSocket transport for Unity.
+  remote_planning.py      Scripted remote pick-and-place trajectories.
+  remote_scene.py         Remote-only materials and gripper setup.
+  remote_visibility.py    YOLO camera frame-coverage diagnostics.
   video.py                MP4 recording helper for trajectory previews.
 ```
 
