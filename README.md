@@ -93,7 +93,9 @@ keeps the YOLO bridge stream available on port 8100.
 
 For bridge endpoints and Unity integration, see
 [docs/remote_bridge.md](docs/remote_bridge.md). More command variants are in
-[docs/command_reference.md](docs/command_reference.md).
+[docs/command_reference.md](docs/command_reference.md). A complete ordered
+verification checklist is in
+[docs/full_test_commands.md](docs/full_test_commands.md).
 
 ## Development Notes
 

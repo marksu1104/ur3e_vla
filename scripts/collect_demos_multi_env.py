@@ -554,6 +554,7 @@ def main():
                         "instruction": instruction,
                         "scene_profile": "canonical_scene_v1",
                         "gripper_action_encoding": "logical_binary_0_open_1_closed",
+                        "record_hz": 5.0,
                         "success": True,
                         "num_steps": diag["num_steps_recorded"],
                         "collection_time": time.strftime("%Y-%m-%d %H:%M:%S"),
