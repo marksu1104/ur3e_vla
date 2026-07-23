@@ -13,6 +13,7 @@ from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
 from sensor_msgs.msg import Image, JointState
 from std_msgs.msg import Float64MultiArray
+from ur_msgs.srv import SetIO
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
@@ -46,6 +47,12 @@ def parse_args():
     parser.add_argument("--diagnostics", action="store_true",
                         help="Print image/controller/joint-state health while running.")
     parser.add_argument("--enable-motion", action="store_true")
+    parser.add_argument("--gripper-io-service", default="/io_and_status_controller/set_io",
+                        help="ROS 2 SetIO service name exposed by ur_robot_driver.")
+    parser.add_argument("--gripper-io-pin", type=int, default=0,
+                        help="UR digital output pin number driving the gripper.")
+    parser.add_argument("--gripper-close-threshold", type=float, default=0.5,
+                        help="VLA action[6] value above which the gripper is commanded closed.")
     return parser.parse_args()
 
 
@@ -77,6 +84,17 @@ class RealVLAServo(Node):
         self.started_at = time.monotonic()
         self.query_count = 0
         self.publish_count = 0
+        self.last_gripper_sent = None
+
+        self.gripper_client = self.create_client(SetIO, args.gripper_io_service)
+        self.gripper_available = self.gripper_client.wait_for_service(timeout_sec=3.0)
+        if self.gripper_available:
+            self.get_logger().info(f"Gripper IO connected: {args.gripper_io_service}")
+        else:
+            self.get_logger().warning(
+                f"Gripper IO service {args.gripper_io_service} not available after 3.0s; "
+                "gripper commands will be skipped."
+            )
 
         self.create_subscription(Image, args.image_topic, self._on_image, qos_profile_sensor_data)
         if args.diagnostics:
@@ -120,6 +138,29 @@ class RealVLAServo(Node):
         except Exception as exc:
             self.get_logger().warning(f"Failed to convert image: {exc}")
 
+    def _set_gripper(self, is_closed: bool):
+        """Send the DO pin state if it differs from the last value sent. Non-blocking."""
+        if not self.gripper_available or not self.args.enable_motion:
+            return
+        value = 1.0 if is_closed else 0.0
+        if value == self.last_gripper_sent:
+            return
+        self.last_gripper_sent = value
+
+        req = SetIO.Request()
+        req.fun = SetIO.Request.FUN_SET_DIGITAL_OUT
+        req.pin = self.args.gripper_io_pin
+        req.state = value
+
+        future = self.gripper_client.call_async(req)
+        future.add_done_callback(lambda f: self._on_gripper_response(f, value))
+
+    def _on_gripper_response(self, future, value):
+        try:
+            future.result()
+            self.get_logger().info(f"[Gripper] DO_{self.args.gripper_io_pin} set to {value:.0f}")
+        except Exception as exc:
+            self.get_logger().warning(f"[Gripper] SetIO failed: {type(exc).__name__}: {exc}")
 
     def _on_controller_cmd(self, msg: Float64MultiArray):
         self.last_controller_cmd = np.asarray(msg.data, dtype=np.float32)
@@ -158,11 +199,14 @@ class RealVLAServo(Node):
         self.last_cmd_angular = angular.astype(np.float32)
         self.query_count += 1
 
+        gripper_closed = bool(action[6] > self.args.gripper_close_threshold)
+        self._set_gripper(gripper_closed)
+
         self.get_logger().info(
             f"vla#{self.query_count} action={np.round(action, 5).tolist()} "
             f"cmd_linear={np.round(linear, 5).tolist()} "
             f"cmd_angular={np.round(angular, 5).tolist()} "
-            f"gripper_ignored={action[6]:.3f}"
+            f"gripper={'closed' if gripper_closed else 'open'} ({action[6]:.3f})"
         )
 
 
