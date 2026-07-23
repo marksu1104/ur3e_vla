@@ -26,7 +26,7 @@ def parse_cli_args():
     parser = argparse.ArgumentParser(allow_abbrev=False)
     AppLauncher.add_app_launcher_args(parser)
     parser.add_argument(
-        "--target", type=str, default="banana", choices=list(TARGETS.keys()),
+        "--target", type=str, default="red_mug", choices=list(TARGETS.keys()),
         help="Which YCB object to grasp",
     )
     args, _ = parser.parse_known_args()

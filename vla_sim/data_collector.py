@@ -89,6 +89,14 @@ def append_episode_h5(h5_path: Path, episode_id: int, buffer: EpisodeBuffer, met
     group_name = f"demo_{episode_id}"
 
     with h5py.File(h5_path, "a") as h5_file:
+        scene_profile = str(meta.get("scene_profile", ""))
+        if scene_profile:
+            existing_profile = h5_file.attrs.get("scene_profile")
+            if existing_profile is not None and str(existing_profile) != scene_profile:
+                raise ValueError(
+                    f"dataset scene_profile is {existing_profile!r}, not {scene_profile!r}"
+                )
+            h5_file.attrs["scene_profile"] = scene_profile
         h5_file.attrs.setdefault("schema_version", "v1")
         h5_file.attrs.setdefault("format", "vla_demo_hdf5")
         h5_file.attrs.setdefault(

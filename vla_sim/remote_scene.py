@@ -26,7 +26,7 @@ from vla_sim.config import (
     TABLE_MAT_B_POS,
     TABLE_MAT_SIZE,
 )
-from vla_sim.camera_policy import make_policy_camera_cfg
+from vla_sim.camera_policy import make_policy_camera_cfg, make_wrist_camera_cfg
 from vla_sim.remote_config import (
     PLACE_MARKER_RADIUS,
     PLACE_MARKER_THICKNESS,
@@ -147,6 +147,7 @@ class RemoteSceneCfg(InteractiveSceneCfg):
         ),
     )
     camera_policy = make_policy_camera_cfg()
+    camera_wrist = make_wrist_camera_cfg()
 
 
 def make_remote_scene_cfg(
