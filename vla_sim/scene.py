@@ -85,23 +85,25 @@ def find_gripper_mount_abs(stage):
     raise RuntimeError("Could not locate gripper base link for assembly")
 
 
-def spawn_raw_and_assemble():
+def spawn_raw_and_assemble(gripper_usd_relative: str | None = None):
     """Load UR3e and Robotiq USD assets, then assemble them into one robot."""
     from isaacsim.core.utils.stage import add_reference_to_stage
     from isaacsim.robot_setup.assembler import RobotAssembler
     from pxr import UsdGeom
 
     stage = omni.usd.get_context().get_stage()
+    gripper_asset = gripper_usd_relative or GRIPPER_USD_RELATIVE
+    gripper_usd_path = f"{ISAAC_NUCLEUS_DIR}/{gripper_asset}"
     if not stage.GetPrimAtPath("/World").IsValid():
         UsdGeom.Xform.Define(stage, "/World")
 
     import omni.client as _client
     log(f"DEBUG: ISAAC_NUCLEUS_DIR = {ISAAC_NUCLEUS_DIR}")
     log(f"DEBUG: UR3E_USD_PATH    = {UR3E_USD_PATH}")
-    log(f"DEBUG: GRIPPER_USD_PATH = {GRIPPER_USD_PATH}")
+    log(f"DEBUG: GRIPPER_USD_PATH = {gripper_usd_path}")
     _r, _ = _client.stat(UR3E_USD_PATH)
     log(f"DEBUG: UR3e stat result    = {_r}")
-    _r, _ = _client.stat(GRIPPER_USD_PATH)
+    _r, _ = _client.stat(gripper_usd_path)
     log(f"DEBUG: Gripper stat result = {_r}")
 
     log(f"Loading UR3e at {ROBOT_PRIM_PATH}...")
@@ -109,7 +111,7 @@ def spawn_raw_and_assemble():
     log("UR3e add_reference_to_stage returned OK")
 
     log(f"Loading gripper at {GRIPPER_PRIM_PATH}...")
-    add_reference_to_stage(usd_path=GRIPPER_USD_PATH, prim_path=GRIPPER_PRIM_PATH)
+    add_reference_to_stage(usd_path=gripper_usd_path, prim_path=GRIPPER_PRIM_PATH)
     log("Gripper add_reference_to_stage returned OK")
 
     kit = omni.kit.app.get_app()
@@ -221,11 +223,16 @@ def make_target_cfg(name: str, info: dict, prim_path: str | None = None) -> Rigi
         min_torsional_patch_radius=0.05,
     )
     if info.get("collision_usd"):
+        scale = info.get("scale")
+        usd_options = {}
+        if scale is not None:
+            usd_options["scale"] = (float(scale),) * 3
         spawn_cfg = sim_utils.UsdFileCfg(
             usd_path=str(ASSET_DIR / info["collision_usd"]),
             rigid_props=rigid_props,
             mass_props=mass_props,
             collision_props=collision_props,
+            **usd_options,
         )
     else:
         spawn_cfg = sim_utils.CuboidCfg(
