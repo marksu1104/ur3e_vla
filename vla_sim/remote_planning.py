@@ -17,6 +17,7 @@ from vla_sim.remote_config import REMOTE_GRIPPER_CLOSE
 
 ARM_SPEED_MPS = 0.20
 GRIPPER_SPEED_RAD_S = 0.75
+GRIPPER_CLOSED = 1.0
 
 
 def move_duration(
@@ -52,6 +53,8 @@ def build_pick_place_trajectory(
         carry_z + float(target_info.get("carry_extra_z", 0.0)), WORKSPACE_Z[1]
     )
 
+    # Keep timing in physical radians while exposing logical commands to the
+    # shared RobotController (0.0=open, 1.0=closed).
     close_position = float(target_info.get("gripper_close", REMOTE_GRIPPER_CLOSE))
     gripper_duration = (close_position - GRIPPER_OPEN) / GRIPPER_SPEED_RAD_S
     grasp_quat = sample_grasp_quat(
@@ -80,14 +83,14 @@ def build_pick_place_trajectory(
         (move_duration(HOME_POS, hover), hover, grasp_quat, GRIPPER_OPEN),
         (move_duration(hover, pre_grasp), pre_grasp, grasp_quat, GRIPPER_OPEN),
         (move_duration(pre_grasp, grasp), grasp, grasp_quat, GRIPPER_OPEN),
-        (gripper_duration, grasp, grasp_quat, close_position),
-        (move_duration(grasp, hover), hover, grasp_quat, close_position),
-        (move_duration(hover, carry), carry, grasp_quat, close_position),
+        (gripper_duration, grasp, grasp_quat, GRIPPER_CLOSED),
+        (move_duration(grasp, hover), hover, grasp_quat, GRIPPER_CLOSED),
+        (move_duration(hover, carry), carry, grasp_quat, GRIPPER_CLOSED),
         (
             move_duration(carry, place_down),
             place_down,
             grasp_quat,
-            close_position,
+            GRIPPER_CLOSED,
         ),
         (gripper_duration, place_down, grasp_quat, GRIPPER_OPEN),
         (move_duration(place_down, carry), carry, grasp_quat, GRIPPER_OPEN),
