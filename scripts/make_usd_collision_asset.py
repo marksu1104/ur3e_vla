@@ -52,6 +52,19 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--contact-offset", type=float, default=0.002, help="PhysX contact offset.")
     parser.add_argument("--rest-offset", type=float, default=0.0, help="PhysX rest offset.")
     parser.add_argument(
+        "--bake-first-mesh",
+        action="store_true",
+        help="Copy the first source mesh into the output instead of referencing the source USD.",
+    )
+    parser.add_argument(
+        "--bottom-support-center",
+        help="Optional x,y,z center of a thin box merged into a baked mesh, in meters.",
+    )
+    parser.add_argument(
+        "--bottom-support-size",
+        help="Optional x,y,z size of a box merged into a baked mesh, in meters.",
+    )
+    parser.add_argument(
         "--no-rigid-body",
         action="store_true",
         help="Only add mesh collisions; do not add rigid body and mass APIs.",
@@ -133,6 +146,15 @@ def normalized_stage_path(path: str) -> str:
     return str(Path(path).expanduser().resolve())
 
 
+def parse_vec3(value: str | None, name: str) -> tuple[float, float, float] | None:
+    if value is None:
+        return None
+    parts = tuple(float(part.strip()) for part in value.split(","))
+    if len(parts) != 3:
+        raise ValueError(f"{name} must contain exactly three comma-separated values")
+    return parts
+
+
 def apply_collision_to_mesh(mesh_prim, approximation: str, contact_offset: float, rest_offset: float) -> bool:
     from pxr import UsdPhysics
 
@@ -156,7 +178,7 @@ def apply_collision_to_mesh(mesh_prim, approximation: str, contact_offset: float
 
 
 def main() -> None:
-    from pxr import Usd, UsdGeom, UsdPhysics
+    from pxr import Gf, Usd, UsdGeom, UsdPhysics
 
     configure_asset_root()
     source = resolve_source_path(args_cli.source)
@@ -172,10 +194,66 @@ def main() -> None:
 
     root = UsdGeom.Xform.Define(stage, args_cli.root_prim).GetPrim()
     stage.SetDefaultPrim(root)
-    root.GetReferences().AddReference(source)
+    support_center = parse_vec3(args_cli.bottom_support_center, "--bottom-support-center")
+    support_size = parse_vec3(args_cli.bottom_support_size, "--bottom-support-size")
+    if (support_center is None) != (support_size is None):
+        raise ValueError("--bottom-support-center and --bottom-support-size must be used together")
+    if support_center is not None and not args_cli.bake_first_mesh:
+        raise ValueError("bottom support requires --bake-first-mesh")
 
-    # Resolve the referenced asset before traversing composed child meshes.
-    stage.Load(args_cli.root_prim)
+    if args_cli.bake_first_mesh:
+        source_stage = Usd.Stage.Open(source)
+        if source_stage is None:
+            raise RuntimeError(f"Could not open source stage: {source}")
+        source_root = source_stage.GetDefaultPrim()
+        source_mesh = next(
+            (prim for prim in Usd.PrimRange(source_root) if prim.IsA(UsdGeom.Mesh)),
+            None,
+        )
+        if source_mesh is None:
+            raise RuntimeError(f"No source mesh found to bake under: {source_root.GetPath()}")
+        source_geom = UsdGeom.Mesh(source_mesh)
+        source_units = float(UsdGeom.GetStageMetersPerUnit(source_stage))
+        source_to_world = UsdGeom.XformCache().GetLocalToWorldTransform(source_mesh)
+        points = [
+            Gf.Vec3f(*(float(value) * source_units for value in source_to_world.Transform(point)))
+            for point in source_geom.GetPointsAttr().Get()
+        ]
+        counts = list(source_geom.GetFaceVertexCountsAttr().Get())
+        indices = list(source_geom.GetFaceVertexIndicesAttr().Get())
+
+        if support_center is not None and support_size is not None:
+            cx, cy, cz = support_center
+            hx, hy, hz = (0.5 * value for value in support_size)
+            offset = len(points)
+            points.extend(
+                Gf.Vec3f(x, y, z)
+                for x, y, z in (
+                    (cx - hx, cy - hy, cz - hz),
+                    (cx + hx, cy - hy, cz - hz),
+                    (cx + hx, cy - hy, cz + hz),
+                    (cx - hx, cy - hy, cz + hz),
+                    (cx - hx, cy + hy, cz - hz),
+                    (cx + hx, cy + hy, cz - hz),
+                    (cx + hx, cy + hy, cz + hz),
+                    (cx - hx, cy + hy, cz + hz),
+                )
+            )
+            counts.extend([4, 4, 4, 4, 4, 4])
+            indices.extend(
+                offset + index
+                for index in (0, 1, 2, 3, 4, 7, 6, 5, 0, 4, 5, 1, 1, 5, 6, 2, 2, 6, 7, 3, 4, 0, 3, 7)
+            )
+
+        baked_mesh = UsdGeom.Mesh.Define(stage, f"{args_cli.root_prim}/CollisionMesh")
+        baked_mesh.CreatePointsAttr(points)
+        baked_mesh.CreateFaceVertexCountsAttr(counts)
+        baked_mesh.CreateFaceVertexIndicesAttr(indices)
+        baked_mesh.CreateSubdivisionSchemeAttr(UsdGeom.Tokens.none)
+    else:
+        root.GetReferences().AddReference(source)
+        # Resolve the referenced asset before traversing composed child meshes.
+        stage.Load(args_cli.root_prim)
 
     mesh_count = 0
     mesh_paths = []

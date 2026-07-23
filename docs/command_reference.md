@@ -34,6 +34,40 @@ conda activate rlds_env
 cd ~/IsaacLab/ur3e_vla/rlds_builder/ur3e_vla_dataset
 ```
 
+## Remote Pick-and-Place Bridge
+
+Use any terminal with an OpenSSH client. Create the tunnel and log in:
+
+```console
+ssh -tt -o ExitOnForwardFailure=yes -o ServerAliveInterval=15 -o ServerAliveCountMax=3 -L 127.0.0.1:18100:127.0.0.1:8100 -p 6002 acolab@140.112.42.35
+```
+
+Run Isaac in that remote shell:
+
+```bash
+source /opt/ros/jazzy/setup.bash
+source ~/ros2_jazzy_ws/install/setup.bash
+source ~/miniconda3/etc/profile.d/conda.sh
+conda activate env_isaaclab_ros2
+cd ~/IsaacLab
+
+./isaaclab.sh -p ./ur3e_vla/scripts/run_remote_pick_place.py \
+  --headless \
+  --enable_cameras
+```
+
+The optional Python client uses the same protocol as Unity. Run it from a local
+project checkout, replacing `python3` with the local Python command if needed:
+
+```console
+python3 scripts/test_bridge_client.py --server http://127.0.0.1:18100 --watch
+python3 scripts/test_bridge_client.py --server http://127.0.0.1:18100 --obj 0 --dest 0
+python3 scripts/test_bridge_client.py --server http://127.0.0.1:18100 --control reset
+```
+
+See [remote_bridge.md](remote_bridge.md) for setup, endpoint behavior, and
+the temporary `--show-markers` position check.
+
 ## Collect Demos
 
 Raw command for one target:
