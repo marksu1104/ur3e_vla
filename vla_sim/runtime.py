@@ -29,7 +29,7 @@ from vla_sim.remote_config import (
     REMOTE_GRIPPER_CLOSE,
     REMOTE_GRIPPER_USD_RELATIVE,
 )
-from vla_sim.remote_planning import GRIPPER_SPEED_RAD_S
+from vla_sim.demo_planning import GRIPPER_SPEED_RAD_S
 from vla_sim.remote_scene import (
     bind_gripper_pad_visuals,
     configure_gripper_pads,

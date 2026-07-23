@@ -46,7 +46,7 @@ from vla_sim.remote_config import (
 )
 from vla_sim.demo_planning import detect_success
 from vla_sim.remote_bridge import RemoteBridge
-from vla_sim.remote_planning import build_pick_place_trajectory
+from vla_sim.demo_planning import build_canonical_pick_place_trajectory
 from vla_sim.remote_visibility import goal_visibility_report, object_visibility_report
 from vla_sim.runtime import RuntimeOptions, SimulationRuntime
 
@@ -130,7 +130,7 @@ def main() -> None:
                     max_finger_joint = float(GRIPPER_OPEN)
                     run_t = 0.0
                     target_info = REMOTE_TARGETS[command["object"]]
-                    trajectory = build_pick_place_trajectory(
+                    trajectory = build_canonical_pick_place_trajectory(
                         target_info,
                         resting,
                         rotation,
