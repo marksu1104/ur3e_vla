@@ -577,7 +577,7 @@ shape 錯誤。測完先停止 Isaac，再停止 VLA server。
 Terminal A 先執行「Isaac Lab 共用環境」：
 
 ```bash
-./isaaclab.sh -p ./ur3e_vla/scripts/sync_real_to_sim.py \
+./isaaclab.sh -p ./ur3e_vla/scripts/sync_sim_real.py \
   --headless --enable_cameras \
   --joint-states-topic /joint_states \
   --joint-state-timeout 0.5
@@ -653,7 +653,7 @@ ros2 topic echo /joint_states --once
 再執行：
 
 ```bash
-./isaaclab.sh -p ./ur3e_vla/scripts/sync_real_to_sim.py \
+./isaaclab.sh -p ./ur3e_vla/scripts/sync_sim_real.py \
   --headless --enable_cameras \
   --joint-states-topic /joint_states \
   --joint-state-timeout 0.5
@@ -661,6 +661,11 @@ ros2 topic echo /joint_states --once
 
 手動慢速調整實體手臂，確認虛擬六軸跟隨；此 runner 不會發送任何實體
 運動命令。
+
+## 10.3 虛擬軌跡驅動實機（sim-to-real）
+
+目前只支援 `obj=1, dest=2` 與 reset。完整且唯一的操作方式請見
+[`docs/sim_real_sync.md`](sim_real_sync.md)。其他物品與位置尚未開放。
 
 ## 11. Real VLA Servo dry-run
 

@@ -81,13 +81,30 @@ def build_pick_place_trajectory(
     target_resting: np.ndarray,
     target_rot: np.ndarray,
     place_xy: tuple[float, float],
+    *,
+    grasp_z_offset: float = 0.0,
+    place_z_offset: float = 0.0,
 ) -> list[tuple]:
-    """Build the no-dwell canonical path with logical 0..1 gripper commands."""
+    """Build the no-dwell canonical path with logical 0..1 gripper commands.
+
+    ``grasp_z_offset`` and ``place_z_offset`` raise the descent depth of the
+    grasp and the release respectively, in metres, without touching anything
+    else about the path. Both default to zero, so the canonical simulated
+    trajectory -- and therefore every H5/RLDS episode built from it -- is
+    unchanged.
+
+    They exist because the simulated depths are tuned against the simulated
+    gripper and object meshes, while the real cell needs shallower descents:
+    what is a clean grasp in simulation can bottom out against the real table.
+    Keeping this as a caller-supplied offset means the real robot can be tuned
+    without forking the path or perturbing training data.
+    """
     tx, ty, tz = map(float, target_resting)
     gx = tx + float(target_info.get("x_nudge", 0.0))
     gy = ty + float(target_info.get("y_nudge", 0.0))
     hover_z = tz + float(target_info["hover_z"])
-    grasp_z = tz + float(target_info["grasp_z"])
+    grasp_z = tz + float(target_info["grasp_z"]) + float(grasp_z_offset)
+    place_z = tz + float(target_info["grasp_z"]) + float(place_z_offset)
     carry_z = max(hover_z, float(target_info["min_carry_z"]))
     carry_z = min(
         carry_z + float(target_info.get("carry_extra_z", 0.0)), WORKSPACE_Z[1]
@@ -113,7 +130,7 @@ def build_pick_place_trajectory(
     hover = (gx, gy, hover_z)
     grasp = (gx, gy, grasp_z)
     pre_grasp = (gx, gy, min(grasp_z + 0.055, hover_z))
-    place_down = (float(place_xy[0]), float(place_xy[1]), grasp_z)
+    place_down = (float(place_xy[0]), float(place_xy[1]), place_z)
     carry = (float(place_xy[0]), float(place_xy[1]), carry_z)
 
     return [

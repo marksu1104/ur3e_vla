@@ -28,7 +28,6 @@ from vla_sim.config import (
     ROBOT_BASE_ROT,
 )
 from vla_sim.isaac_app import log
-from vla_sim.joint_sync import LatestJointState
 from vla_sim.planning import GRIPPER_SPEED_RAD_S
 from vla_sim.scene import (
     bind_gripper_pad_visuals,
@@ -69,33 +68,6 @@ class PhysicsDriveBackend(StateBackend):
 
 class ExternalStateBackend(StateBackend, ABC):
     """Read-only interface reserved for measured robot state."""
-
-
-class JointSyncBackend(ExternalStateBackend):
-    """Write only the latest valid external arm sample into Isaac."""
-
-    def __init__(self, source: LatestJointState):
-        self.source = source
-        self.last_snapshot = source.snapshot()
-        self.paused = False
-
-    @property
-    def status(self) -> dict:
-        snapshot = self.last_snapshot
-        return {
-            "state": "paused" if self.paused else snapshot.state,
-            "detail": "paused" if self.paused else snapshot.detail,
-            "age_seconds": snapshot.age_seconds,
-            "received_at": snapshot.received_at,
-        }
-
-    def apply(self, controller: "RobotController", dt: float) -> None:
-        del dt
-        self.last_snapshot = self.source.snapshot()
-        if self.paused or not self.last_snapshot.is_live:
-            return
-        if self.last_snapshot.positions is not None:
-            controller.write_measured_arm_state(self.last_snapshot.positions)
 
 
 @dataclass(frozen=True)
@@ -232,6 +204,40 @@ class RobotController:
             joint_ids=self.arm_ids_t,
         )
         self.robot.set_joint_position_target(values, joint_ids=self.arm_ids_t)
+
+    def apply_gripper_target(self) -> None:
+        """Re-assert only the finger target, leaving the arm alone.
+
+        External-state backends drive the arm from measured joint values and
+        never call ``apply_physics_targets``, so without this the virtual
+        gripper's target is set once and then not maintained.
+        """
+        finger_target = torch.full(
+            (1, 1),
+            self._physical_gripper_command,
+            dtype=torch.float32,
+            device=self.device,
+        )
+        self.robot.set_joint_position_target(finger_target, joint_ids=self.finger_ids_t)
+
+    def write_commanded_gripper_state(self, logical: float, dt: float | None = None) -> None:
+        """Track a commanded 0..1 gripper state on the virtual robot.
+
+        Used by real-to-sim style mirroring, where the arm's pose comes from
+        measured joint states but the gripper has none: the real Robotiq is
+        driven over a digital output and reports only open/grasped digital
+        inputs, never a joint position. So the mirror can only reflect what was
+        commanded, not what was measured.
+
+        Pass ``dt`` to close at the simulation's own finger speed. The real
+        gripper is smaller and snaps shut far faster than the simulated one;
+        writing that end state directly teleports the virtual fingers through
+        the object, which resolves as an explosive contact instead of a grasp.
+        Ramping keeps the virtual contact physically meaningful even though the
+        real gripper has already finished moving.
+        """
+        self.set_gripper_command(logical, dt, rate_limit=dt is not None)
+        self.apply_gripper_target()
 
     def apply_physics_targets(self) -> None:
         """Apply IK arm targets and the single official Robotiq drive joint."""

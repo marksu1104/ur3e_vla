@@ -80,7 +80,7 @@ This command consumes `/joint_states` by joint name and never publishes Servo,
 trajectory, or other real-robot motion commands:
 
 ```bash
-./isaaclab.sh -p ./ur3e_vla/scripts/sync_real_to_sim.py \
+./isaaclab.sh -p ./ur3e_vla/scripts/sync_sim_real.py \
   --headless --enable_cameras \
   --joint-states-topic /joint_states \
   --joint-state-timeout 0.5
@@ -88,6 +88,10 @@ trajectory, or other real-robot motion commands:
 
 The sync runner also exposes the normal YOLO bridge stream on port 8100. Use
 `/control` with `pause`, `resume`, or `reset` for the virtual scene only.
+
+The physical sim-to-real mode currently supports only `obj=1, dest=2` and
+reset. Use the exact commands in
+[`docs/sim_real_sync.md`](sim_real_sync.md); other pairs are rejected.
 
 ## Multi-Env Collection
 

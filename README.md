@@ -28,7 +28,7 @@ scripts/run_scene.py              Canonical scene without bridge, VLA, or ROS.
 scripts/run_vla.py                OpenVLA rollout using camera_policy.
 scripts/collect_demos.py          Canonical 5 Hz H5 collection.
 scripts/collect_demos_multi_env.py  Vectorized canonical H5 collection.
-scripts/sync_real_to_sim.py       Read-only real UR3e → Isaac joint sync.
+scripts/sync_sim_real.py          Persistent real/Isaac joint synchronization.
 scripts/tools/test_bridge_client.py  Manual bridge validation client.
 ```
 
@@ -85,7 +85,7 @@ never publishes robot motion, holds its last pose after a stale timeout, and
 keeps the YOLO bridge stream available on port 8100.
 
 ```bash
-./isaaclab.sh -p ./ur3e_vla/scripts/sync_real_to_sim.py \
+./isaaclab.sh -p ./ur3e_vla/scripts/sync_sim_real.py \
   --headless --enable_cameras \
   --joint-states-topic /joint_states \
   --joint-state-timeout 0.5
@@ -96,6 +96,8 @@ For bridge endpoints and Unity integration, see
 [docs/command_reference.md](docs/command_reference.md). A complete ordered
 verification checklist is in
 [docs/full_test_commands.md](docs/full_test_commands.md).
+The currently supported sim-to-real task and reset procedure are documented in
+[docs/sim_real_sync.md](docs/sim_real_sync.md).
 
 ## Development Notes
 

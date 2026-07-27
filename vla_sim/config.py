@@ -111,7 +111,9 @@ TARGETS = {
         "color": (1.00, 0.20, 0.20),
         "grasp_z": 0.195,
         "hover_z": 0.295,
-        "x_nudge": 0.0,
+        # The YCB origin centers the full mug including its handle. Offset the
+        # grasp to the cylindrical cup body center instead.
+        "x_nudge": -0.0145,
         "y_nudge": 0.0,
         "align_gripper_to_yaw": True,
         "grasp_yaw_offsets": (0.0, 3.1416),

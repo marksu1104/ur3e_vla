@@ -48,6 +48,7 @@ class BridgeServer:
         port: int = 8100,
         jpeg_quality: int = 85,
         allow_tasks: bool = True,
+        allowed_task_pairs: set[tuple[int, int]] | None = None,
     ):
         self.task_names = {
             int(key): str(value) for key, value in task_names.items()
@@ -57,6 +58,14 @@ class BridgeServer:
         self.port = int(port)
         self.jpeg_quality = int(np.clip(jpeg_quality, 1, 100))
         self.allow_tasks = bool(allow_tasks)
+        self.allowed_task_pairs = (
+            None
+            if allowed_task_pairs is None
+            else {
+                (int(task_index), int(position_index))
+                for task_index, position_index in allowed_task_pairs
+            }
+        )
 
         self._status_lock = threading.Lock()
         self._status: dict[str, Any] = {
@@ -72,6 +81,14 @@ class BridgeServer:
             "frames_sent": 0,
             "yolo_visibility": None,
             "goal_visibility": None,
+            "supported_tasks": (
+                None
+                if self.allowed_task_pairs is None
+                else [
+                    {"obj": obj, "dest": dest}
+                    for obj, dest in sorted(self.allowed_task_pairs)
+                ]
+            ),
         }
         self._next_trial_id = 1
         self._pending_command: dict[str, Any] | None = None
@@ -138,6 +155,17 @@ class BridgeServer:
                 )
             obj = self._require_index(payload, "obj", self.task_names)
             dest = self._require_index(payload, "dest", range(self.num_positions))
+            if (
+                self.allowed_task_pairs is not None
+                and (obj, dest) not in self.allowed_task_pairs
+            ):
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"unsupported task; allowed pairs are "
+                        f"{sorted(self.allowed_task_pairs)}"
+                    ),
+                )
             command = self._reserve_task(obj, dest)
             return {
                 "accepted": True,
@@ -239,6 +267,7 @@ class BridgeServer:
                 "seed",
                 "yolo_visibility",
                 "goal_visibility",
+                "supported_tasks",
             ):
                 event[field] = copy.deepcopy(status.get(field))
         return event
