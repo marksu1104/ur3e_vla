@@ -34,6 +34,7 @@ from vla_sim.scene import (
     configure_gripper_pads,
     hide_markers,
     make_scene_cfg,
+    prepare_destination_fixtures,
     prepare_target_visuals,
     set_marker_material,
     set_plastic_material,
@@ -77,6 +78,7 @@ class RuntimeOptions:
     stream_width: int | None = None
     stream_height: int | None = None
     show_markers: bool = False
+    show_destination_fixtures: bool = False
     device: str = "cuda:0"
 
 
@@ -337,6 +339,8 @@ class SimulationRuntime:
         }.items():
             set_plastic_material(stage, path, color)
         prepare_target_visuals(stage)
+        if self.options.show_destination_fixtures:
+            prepare_destination_fixtures(stage)
         paths = bind_gripper_pad_visuals(stage)
         log(f"Robotiq finger-pad setup applied at: {paths}")
         for index, color in enumerate(PLACE_MARKER_COLORS):

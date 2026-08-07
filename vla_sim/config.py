@@ -160,7 +160,46 @@ TARGETS = {
 TARGET_KEYS = ("spoon", "red_mug", "bowl")
 TASK_INDEX_MAP = dict(enumerate(TARGET_KEYS))
 
-PLACE_POSITIONS = ((0.37, 0.13), (0.34, -0.025), (0.21, 0.045))
+PLACE_POSITIONS = (
+    (0.37, 0.13),  # 0: spoon destination; displays the cutlery box
+    (0.34, -0.025),  # 1: mug destination; displays the empty coaster
+    (0.21, 0.045),  # 2: original bowl-stack destination
+)
+
+# Fixed destination fixtures used by the remote demonstration. Their colliders
+# are enabled only when the fixtures are visible, so other runtimes never see
+# invisible obstacles.
+CUTLERY_BOX_SIZE = (0.205, 0.120, 0.006)
+CUTLERY_BOX_WALL_THICKNESS = 0.005
+CUTLERY_BOX_WALL_HEIGHT = 0.024
+CUTLERY_BOX_SPOON_SCALE = 0.670
+CUTLERY_BOX_REFERENCE_SPOON_OFFSET = (0.037, -0.022)
+CUTLERY_BOX_TARGET_SLOT_Y_OFFSET = 0.022
+CUTLERY_BOX_CENTER_X_OFFSET = -0.015
+CUTLERY_BOX_CENTER_Y_OFFSET = 0.030
+MUG_COASTER_RADIUS = 0.055
+MUG_COASTER_HEIGHT = 0.004
+REFERENCE_COASTER_OFFSET = (0.130, 0.0)
+REFERENCE_MUG_Z_OFFSET = 0.047
+# Identical bowls nest with 20 mm between their roots. The first root is at
+# the bowl's natural table-resting height; the second starts already stacked.
+BOWL_STACK_Z_OFFSETS = (0.031, 0.051)
+
+# Release clearances for the three matching semantic destinations. These lift
+# the moving object onto the physical fixture instead of releasing it at the
+# original bare-table height.
+SPOON_DESTINATION_Z_OFFSET = 0.008
+MUG_DESTINATION_Z_OFFSET = 0.005
+BOWL_DESTINATION_Z_OFFSET = 0.043
+DESTINATION_PROP_COLORS = {
+    "box": (0.30, 0.12, 0.035),
+    "box_inside": (0.66, 0.42, 0.18),
+    "spoons": (0.30, 0.34, 0.38),
+    "coasters": (0.44, 0.24, 0.08),
+    "reference_mug": (0.30, 0.34, 0.36),
+    "stack_bowl": (0.58, 0.53, 0.42),
+}
+
 PLACE_MARKER_COLORS = (
     (0.05, 0.95, 0.10),
     (0.95, 0.05, 0.85),

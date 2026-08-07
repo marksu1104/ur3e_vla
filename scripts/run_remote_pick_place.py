@@ -28,14 +28,20 @@ app = boot_app()
 import numpy as np
 from vla_sim.actions import PoseTrajectoryPlayer
 from vla_sim.config import (
+    BOWL_DESTINATION_Z_OFFSET,
     BRIDGE_HOST,
     BRIDGE_PORT,
+    CUTLERY_BOX_CENTER_X_OFFSET,
+    CUTLERY_BOX_CENTER_Y_OFFSET,
+    CUTLERY_BOX_TARGET_SLOT_Y_OFFSET,
     EE_ORIENT_DOWN,
     GRIPPER_CLOSE,
     GRIPPER_OPEN,
     HOME_POS,
     MAX_TRIAL_SECONDS,
+    MUG_DESTINATION_Z_OFFSET,
     PLACE_POSITIONS,
+    SPOON_DESTINATION_Z_OFFSET,
     STREAM_EVERY_N_STEPS,
     STREAM_JPEG_QUALITY,
     TARGET_KEYS,
@@ -83,6 +89,7 @@ def main() -> None:
                 stream_width=_extra_args.stream_width,
                 stream_height=_extra_args.stream_height,
                 show_markers=_extra_args.show_markers,
+                show_destination_fixtures=True,
             )
         ).start()
         scene = runtime.scene
@@ -127,11 +134,39 @@ def main() -> None:
                     max_finger_joint = float(GRIPPER_OPEN)
                     run_t = 0.0
                     target_info = TARGETS[command["object"]]
+                    semantic_destination = (
+                        command["task_index"] == command["position_index"]
+                    )
+                    place_z_offset = 0.0
+                    place_yaw_offset = 0.0
+                    object_place_xy = None
+                    place_nudge_scale = 1.0
+                    if semantic_destination:
+                        if command["object"] == "spoon":
+                            place_z_offset = SPOON_DESTINATION_Z_OFFSET
+                            place_yaw_offset = np.pi / 2.0
+                            object_place_xy = (
+                                PLACE_POSITIONS[0][0] + CUTLERY_BOX_CENTER_X_OFFSET,
+                                PLACE_POSITIONS[0][1]
+                                + CUTLERY_BOX_CENTER_Y_OFFSET
+                                + CUTLERY_BOX_TARGET_SLOT_Y_OFFSET,
+                            )
+                            place_nudge_scale = 0.40
+                        elif command["object"] == "red_mug":
+                            place_z_offset = MUG_DESTINATION_Z_OFFSET
+                        elif command["object"] == "bowl":
+                            place_z_offset = BOWL_DESTINATION_Z_OFFSET
+                            object_place_xy = PLACE_POSITIONS[2]
+                            place_nudge_scale = 0.32
                     trajectory = build_pick_place_trajectory(
                         target_info,
                         resting,
                         rotation,
                         PLACE_POSITIONS[command["position_index"]],
+                        place_z_offset=place_z_offset,
+                        place_yaw_offset=place_yaw_offset,
+                        object_place_xy=object_place_xy,
+                        place_nudge_scale=place_nudge_scale,
                     )
                     player = PoseTrajectoryPlayer(trajectory, device=device)
 

@@ -84,14 +84,20 @@ def build_pick_place_trajectory(
     *,
     grasp_z_offset: float = 0.0,
     place_z_offset: float = 0.0,
+    place_yaw_offset: float = 0.0,
+    object_place_xy: tuple[float, float] | None = None,
+    place_nudge_scale: float = 1.0,
 ) -> list[tuple]:
     """Build the no-dwell canonical path with logical 0..1 gripper commands.
 
     ``grasp_z_offset`` and ``place_z_offset`` raise the descent depth of the
-    grasp and the release respectively, in metres, without touching anything
-    else about the path. Both default to zero, so the canonical simulated
-    trajectory -- and therefore every H5/RLDS episode built from it -- is
-    unchanged.
+    grasp and the release respectively, in metres. ``place_yaw_offset`` turns
+    the held object while travelling from hover to carry, so it is aligned
+    before the final descent. When ``object_place_xy`` is given, the release
+    pose compensates for the grasp nudge (and its place rotation) so the object
+    center, rather than the gripper, lands at that XY coordinate. Defaults
+    preserve the canonical simulated trajectory and existing H5/RLDS data.
+    ``place_nudge_scale`` accounts for partial slip after the physical grasp.
 
     They exist because the simulated depths are tuned against the simulated
     gripper and object meshes, while the real cell needs shallower descents:
@@ -127,11 +133,35 @@ def build_pick_place_trajectory(
         )
         grasp_quat = _quat_mul(grasp_quat, tool_tilt)
 
+    place_quat = grasp_quat
+    if abs(place_yaw_offset) > 1e-8:
+        yaw_quat = (
+            float(np.cos(place_yaw_offset / 2.0)),
+            0.0,
+            0.0,
+            float(np.sin(place_yaw_offset / 2.0)),
+        )
+        place_quat = _quat_mul(yaw_quat, grasp_quat)
+
     hover = (gx, gy, hover_z)
     grasp = (gx, gy, grasp_z)
     pre_grasp = (gx, gy, min(grasp_z + 0.055, hover_z))
-    place_down = (float(place_xy[0]), float(place_xy[1]), place_z)
-    carry = (float(place_xy[0]), float(place_xy[1]), carry_z)
+    place_ee_x, place_ee_y = map(float, place_xy)
+    if object_place_xy is not None:
+        nudge_x = float(target_info.get("x_nudge", 0.0))
+        nudge_y = float(target_info.get("y_nudge", 0.0))
+        cos_yaw = float(np.cos(place_yaw_offset))
+        sin_yaw = float(np.sin(place_yaw_offset))
+        rotated_nudge_x = place_nudge_scale * (
+            cos_yaw * nudge_x - sin_yaw * nudge_y
+        )
+        rotated_nudge_y = place_nudge_scale * (
+            sin_yaw * nudge_x + cos_yaw * nudge_y
+        )
+        place_ee_x = float(object_place_xy[0]) + rotated_nudge_x
+        place_ee_y = float(object_place_xy[1]) + rotated_nudge_y
+    place_down = (place_ee_x, place_ee_y, place_z)
+    carry = (place_ee_x, place_ee_y, carry_z)
 
     return [
         (0.0, HOME_POS, EE_ORIENT_DOWN, GRIPPER_OPEN),
@@ -140,10 +170,10 @@ def build_pick_place_trajectory(
         (move_duration(pre_grasp, grasp), grasp, grasp_quat, GRIPPER_OPEN),
         (gripper_duration, grasp, grasp_quat, GRIPPER_CLOSED),
         (move_duration(grasp, hover), hover, grasp_quat, GRIPPER_CLOSED),
-        (move_duration(hover, carry), carry, grasp_quat, GRIPPER_CLOSED),
-        (move_duration(carry, place_down), place_down, grasp_quat, GRIPPER_CLOSED),
-        (gripper_duration, place_down, grasp_quat, GRIPPER_OPEN),
-        (move_duration(place_down, carry), carry, grasp_quat, GRIPPER_OPEN),
+        (move_duration(hover, carry), carry, place_quat, GRIPPER_CLOSED),
+        (move_duration(carry, place_down), place_down, place_quat, GRIPPER_CLOSED),
+        (gripper_duration, place_down, place_quat, GRIPPER_OPEN),
+        (move_duration(place_down, carry), carry, place_quat, GRIPPER_OPEN),
         (move_duration(carry, HOME_POS), HOME_POS, EE_ORIENT_DOWN, GRIPPER_OPEN),
     ]
 
