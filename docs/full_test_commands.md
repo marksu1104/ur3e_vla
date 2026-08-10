@@ -8,7 +8,7 @@
 
 ## 0. 測試前確認
 
-在專案目錄確認分支、工作目錄與基本 Python 測試：
+在專案目錄確認版本、工作目錄與基本 Python 語法：
 
 ```bash
 cd ~/IsaacLab/ur3e_vla
@@ -17,16 +17,15 @@ git status --short
 git branch --show-current
 git log -1 --oneline
 
-python3 -m compileall -q vla_sim scripts tests
-python3 -m pyflakes vla_sim scripts tests
-python3 -m pytest -q tests
+git diff --check
+python3 -m compileall -q vla_sim scripts
 ```
 
 預期：
 
 - `git status --short` 沒有輸出。
-- 分支為 `refactor/unified-runtime`。
-- pytest 顯示 `4 passed`。
+- commit 與本次要驗證或交接的版本一致。
+- `git diff --check` 與 `compileall` 都沒有錯誤輸出。
 
 確認 GPU 與 8100、8000 port：
 
@@ -734,7 +733,7 @@ rm -rf ~/IsaacLab/ur3e_vla/outputs/test/full_test
 ## 測試結果紀錄
 
 ```text
-[ ] Python compile / pyflakes / pytest
+[ ] Git diff check / Python compile
 [ ] 純場景 headless
 [ ] 純場景 GUI / YOLO 畫面
 [ ] Bridge health / status

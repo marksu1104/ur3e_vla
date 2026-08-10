@@ -47,6 +47,33 @@ conda activate env_isaaclab_ros2
 cd ~/IsaacLab
 ```
 
+## Workstation Baseline
+
+The current project is pinned to the exact workstation stack below. Do not
+upgrade or downgrade one component independently without rerunning the complete
+smoke-test workflow.
+
+```text
+Ubuntu             24.04.4 LTS (kernel 7.0.0-28-generic)
+GPU                NVIDIA GeForce RTX 5090, 32607 MiB
+NVIDIA driver      595.84
+Python             3.12.13
+Isaac Sim          6.0.0.0 (pip)
+Isaac Lab          0.54.3, editable source at ~/IsaacLab
+Isaac Lab commit   d94504bcf91cb7ab7ff956a2d48ecd1bca82797a
+PyTorch            2.7.0+cu128
+ROS                Jazzy (ros-base 0.11.0)
+MoveIt             2.12.4
+UR robot driver    3.7.0
+```
+
+This is a project-validated compatibility setup rather than the default pairing
+documented by that Isaac Lab checkout, whose normal installation guide still
+targets Isaac Sim 5.1 and Python 3.11. `vla_sim/isaac_app.py` intentionally uses
+the Isaac Sim 6.0 full-kit experience and the Isaac 5.1 cloud asset root. Keep
+those compatibility settings until the full scene, camera, collision, data, and
+robot checks have passed on a replacement stack.
+
 ## Canonical Commands
 
 Start the persistent scene and bridge on port 8100:
