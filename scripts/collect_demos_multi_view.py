@@ -213,9 +213,10 @@ def run_one_episode(
             buffer.actions_7d.append(action.tolist())
             buffer.timestamps.append(sim_time)
             for obj_name, obj in scene_objects.items():
-                object_pose = pose_wxyz_from_sim(obj.data.root_state_w)[0]
+                obj_pos = obj.data.root_pos_w[0].cpu().numpy()
+                obj_quat = obj.data.root_state_w[0, 3:7].cpu().numpy()
                 buffer.object_poses[obj_name].append(
-                    object_pose.cpu().numpy().tolist()
+                    np.concatenate([obj_pos, obj_quat]).tolist()
                 )
             previous_pos = ee_pose[:3].copy()
             previous_quat = ee_pose[3:7].copy()

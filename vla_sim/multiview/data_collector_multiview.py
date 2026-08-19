@@ -29,7 +29,6 @@ from vla_sim.data_collector import EpisodeBuffer, append_episode_h5
 def _empty_pose_lists() -> dict:
     return {name: [] for name in TARGET_KEYS}
 
-
 @dataclass
 class MultiviewEpisodeBuffer(EpisodeBuffer):
     """EpisodeBuffer plus the two extra third-person camera streams."""
