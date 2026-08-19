@@ -60,7 +60,7 @@ from isaaclab.actuators import ImplicitActuatorCfg
 from isaaclab.controllers import DifferentialIKController, DifferentialIKControllerCfg
 from isaaclab.scene import InteractiveScene, InteractiveSceneCfg
 from isaaclab.sensors.camera import CameraCfg
-from isaaclab.utils import configclass
+from isaaclab.utils.configclass import configclass
 
 from vla_sim.actions import PoseTrajectoryPlayer, compute_action_from_ee_poses
 from vla_sim.config import (
@@ -101,7 +101,9 @@ from vla_sim.scene import (
     make_static_cuboid_cfg,
     make_table_cfg,
     make_target_cfg,
+    quat_wxyz_to_isaac,
 )
+from vla_sim.runtime import as_torch, pose_wxyz_from_sim
 
 np.random.seed(_extra_args.seed)
 
@@ -134,7 +136,9 @@ def _make_robot_cfg() -> ArticulationCfg:
     return ArticulationCfg(
         prim_path=ROBOT_PRIM,
         spawn=None,
-        init_state=ArticulationCfg.InitialStateCfg(pos=ROBOT_BASE_POS, rot=ROBOT_BASE_ROT),
+        init_state=ArticulationCfg.InitialStateCfg(
+            pos=ROBOT_BASE_POS, rot=quat_wxyz_to_isaac(ROBOT_BASE_ROT)
+        ),
         actuators={
             "arm": ImplicitActuatorCfg(
                 joint_names_expr=ARM_JOINT_NAMES,
@@ -203,7 +207,11 @@ class MultiEnvSceneCfg(InteractiveSceneCfg):
         width=CAMERA_WIDTH,
         data_types=["rgb"],
         spawn=sim_utils.PinholeCameraCfg(focal_length=CAMERA_MAIN_FOCAL),
-        offset=CameraCfg.OffsetCfg(pos=CAMERA_MAIN_POS, rot=CAMERA_MAIN_ROT, convention="opengl"),
+        offset=CameraCfg.OffsetCfg(
+            pos=CAMERA_MAIN_POS,
+            rot=quat_wxyz_to_isaac(CAMERA_MAIN_ROT),
+            convention="opengl",
+        ),
     )
     camera_wrist = CameraCfg(
         prim_path=f"{ROBOT_PRIM}/wrist_3_link/CameraWrist",
@@ -212,7 +220,11 @@ class MultiEnvSceneCfg(InteractiveSceneCfg):
         width=WRIST_CAMERA_WIDTH,
         data_types=["rgb"],
         spawn=sim_utils.PinholeCameraCfg(focal_length=18.0),
-        offset=CameraCfg.OffsetCfg(pos=(0.0, 0.0, 0.12), rot=(0.0, 1.0, 0.0, 0.0), convention="opengl"),
+        offset=CameraCfg.OffsetCfg(
+            pos=(0.0, 0.0, 0.12),
+            rot=quat_wxyz_to_isaac((0.0, 1.0, 0.0, 0.0)),
+            convention="opengl",
+        ),
     )
 
 
@@ -226,12 +238,14 @@ def _shape_of(value):
 def _setup_batch(scene, sim, robot, sim_dt, target_name, target_info, arm_ids_t, finger_ids_t):
     device = str(sim.device)
     num_envs = scene.num_envs
-    origins = scene.env_origins.to(device=device, dtype=torch.float32)
+    origins = as_torch(scene.env_origins).to(device=device, dtype=torch.float32)
     origins_np = origins.detach().cpu().numpy()
 
     root_pose = torch.zeros((num_envs, 7), device=device, dtype=torch.float32)
     root_pose[:, :3] = torch.tensor(ROBOT_BASE_POS, device=device).unsqueeze(0) + origins
-    root_pose[:, 3:] = torch.tensor(ROBOT_BASE_ROT, device=device).unsqueeze(0)
+    root_pose[:, 3:] = torch.tensor(
+        quat_wxyz_to_isaac(ROBOT_BASE_ROT), device=device
+    ).unsqueeze(0)
     robot.write_root_pose_to_sim(root_pose)
     robot.write_root_velocity_to_sim(torch.zeros((num_envs, 6), device=device))
 
@@ -246,7 +260,9 @@ def _setup_batch(scene, sim, robot, sim_dt, target_name, target_info, arm_ids_t,
         pose = torch.zeros((num_envs, 7), device=device)
         local_pos = torch.tensor(object_info["spawn_pos"], device=device)
         pose[:, :3] = local_pos.unsqueeze(0) + origins
-        pose[:, 3:] = torch.tensor(object_info["spawn_rot"], device=device).unsqueeze(0)
+        pose[:, 3:] = torch.tensor(
+            quat_wxyz_to_isaac(object_info["spawn_rot"]), device=device
+        ).unsqueeze(0)
         scene[object_name].write_root_pose_to_sim(pose)
         scene[object_name].write_root_velocity_to_sim(
             torch.zeros((num_envs, 6), device=device)
@@ -263,8 +279,13 @@ def _setup_batch(scene, sim, robot, sim_dt, target_name, target_info, arm_ids_t,
         scene.update(sim_dt)
 
     target_obj = scene[target_name]
-    target_resting = target_obj.data.root_pos_w.detach().cpu().numpy()
-    target_rotations = target_obj.data.root_state_w[:, 3:7].detach().cpu().numpy()
+    target_resting = as_torch(target_obj.data.root_pos_w).detach().cpu().numpy()
+    target_rotations = (
+        pose_wxyz_from_sim(target_obj.data.root_state_w)[..., 3:7]
+        .detach()
+        .cpu()
+        .numpy()
+    )
     players = []
     traj_meta = []
     place_positions = []
@@ -322,7 +343,7 @@ def _run_batch(sim, scene, robot, ik, sim_dt, arm_ids_t, finger_ids_t, ee_body_i
     while step < max_steps:
         samples = [player.sample(t_sim) for player in players]
         tgt_pos_w = torch.stack([s[0] for s in samples], dim=0)
-        tgt_quat_w = torch.stack([s[1] for s in samples], dim=0)
+        tgt_quat_w = quat_wxyz_to_isaac(torch.stack([s[1] for s in samples], dim=0))
         grip_target = np.asarray([s[2] for s in samples], dtype=np.float32)
         finished = np.asarray([s[3] for s in samples], dtype=bool)
 
@@ -332,14 +353,16 @@ def _run_batch(sim, scene, robot, ik, sim_dt, arm_ids_t, finger_ids_t, ee_body_i
         if np.all(finished_at >= 0) and np.all(step - finished_at > 60):
             break
 
-        root_pos = robot.data.root_state_w[:, :3]
+        root_pos = as_torch(robot.data.root_state_w)[:, :3]
         ik.set_command(torch.cat([tgt_pos_w - root_pos, tgt_quat_w], dim=-1))
 
-        ee_pose_w = robot.data.body_state_w[:, ee_body_idx, :7]
+        ee_pose_w = as_torch(robot.data.body_state_w)[:, ee_body_idx, :7]
         ee_pos_b = ee_pose_w[:, :3] - root_pos
         ee_quat_b = ee_pose_w[:, 3:]
-        q_current = robot.data.joint_pos[:, arm_ids_t]
-        jac = robot.root_physx_view.get_jacobians()[:, ee_jac_idx, :, :][:, :, arm_ids_t]
+        q_current = as_torch(robot.data.joint_pos)[:, arm_ids_t.tolist()]
+        jac = as_torch(robot.root_physx_view.get_jacobians())[
+            :, ee_jac_idx, :, :
+        ][:, :, arm_ids_t.tolist()]
         q_target = ik.compute(ee_pos_b, ee_quat_b, jac, q_current)
         robot.set_joint_position_target(q_target, joint_ids=arm_ids_t)
 
@@ -355,12 +378,12 @@ def _run_batch(sim, scene, robot, ik, sim_dt, arm_ids_t, finger_ids_t, ee_body_i
         sim.step()
         scene.update(sim_dt)
 
-        obj_pos = target_obj.data.root_pos_w.detach().cpu().numpy()
+        obj_pos = as_torch(target_obj.data.root_pos_w).detach().cpu().numpy()
         best_lift = np.maximum(best_lift, obj_pos[:, 2] - target_initial_z)
 
         if video_recorder is not None and step % max(1, video_every_n_steps) == 0:
             try:
-                rgb_all = scene[video_camera].data.output["rgb"].detach().cpu().numpy().astype(np.uint8)
+                rgb_all = as_torch(scene[video_camera].data.output["rgb"]).detach().cpu().numpy().astype(np.uint8)
                 if video_env < 0:
                     video_rgb = _tile_env_rgb(rgb_all)
                 else:
@@ -370,15 +393,25 @@ def _run_batch(sim, scene, robot, ik, sim_dt, arm_ids_t, finger_ids_t, ee_body_i
                 log(f"video frame failed: {exc}")
 
         if step % record_every == 0:
-            ee_pose_now_all = robot.data.body_state_w[:, ee_body_idx, :7].detach().cpu().numpy()
-            joint_now_all = robot.data.joint_pos[:, arm_ids_t].detach().cpu().numpy()
+            ee_pose_now_all = (
+                pose_wxyz_from_sim(robot.data.body_state_w)[:, ee_body_idx]
+                .detach()
+                .cpu()
+                .numpy()
+            )
+            joint_now_all = (
+                as_torch(robot.data.joint_pos)[:, arm_ids_t.tolist()]
+                .detach()
+                .cpu()
+                .numpy()
+            )
             try:
-                main_rgb_all = scene["camera_policy"].data.output["rgb"].detach().cpu().numpy().astype(np.uint8)
+                main_rgb_all = as_torch(scene["camera_policy"].data.output["rgb"]).detach().cpu().numpy().astype(np.uint8)
             except Exception as exc:
                 log(f"camera_policy read failed: {exc}")
                 main_rgb_all = np.zeros((num_envs, CAMERA_HEIGHT, CAMERA_WIDTH, 3), dtype=np.uint8)
             try:
-                wrist_rgb_all = scene["camera_wrist"].data.output["rgb"].detach().cpu().numpy().astype(np.uint8)
+                wrist_rgb_all = as_torch(scene["camera_wrist"].data.output["rgb"]).detach().cpu().numpy().astype(np.uint8)
             except Exception:
                 wrist_rgb_all = np.zeros((num_envs, WRIST_CAMERA_HEIGHT, WRIST_CAMERA_WIDTH, 3), dtype=np.uint8)
 
@@ -408,9 +441,9 @@ def _run_batch(sim, scene, robot, ik, sim_dt, arm_ids_t, finger_ids_t, ee_body_i
         step += 1
 
     results = []
-    ee_pos_final_all = robot.data.body_state_w[:, ee_body_idx, :3].detach().cpu().numpy()
-    obj_pos_final_all = target_obj.data.root_pos_w.detach().cpu().numpy()
-    joint_final_all = robot.data.joint_pos[:, finger_ids_t].detach().cpu().numpy()
+    ee_pos_final_all = as_torch(robot.data.body_state_w)[:, ee_body_idx, :3].detach().cpu().numpy()
+    obj_pos_final_all = as_torch(target_obj.data.root_pos_w).detach().cpu().numpy()
+    joint_final_all = as_torch(robot.data.joint_pos)[:, finger_ids_t.tolist()].detach().cpu().numpy()
     for env_id in range(num_envs):
         success, diag = evaluate_pick_place_success(
             obj_pos_final_all[env_id],
@@ -500,11 +533,11 @@ def main():
     robot = scene["robot"]
     device = str(sim.device)
     arm_ids, _ = robot.find_joints(ARM_JOINT_NAMES)
-    arm_ids_t = torch.tensor(arm_ids, dtype=torch.long, device=device)
+    arm_ids_t = torch.tensor(arm_ids, dtype=torch.int32, device=device)
     gripper_joint_ids, _ = robot.find_joints(["finger_joint"])
     if len(gripper_joint_ids) != 1:
         raise RuntimeError(f"expected one finger_joint, found {gripper_joint_ids}")
-    finger_ids_t = torch.tensor(gripper_joint_ids, dtype=torch.long, device=device)
+    finger_ids_t = torch.tensor(gripper_joint_ids, dtype=torch.int32, device=device)
 
     ee_ids, _ = robot.find_bodies([EE_BODY_NAME])
     ee_body_idx = ee_ids[0]

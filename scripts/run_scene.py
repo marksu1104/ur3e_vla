@@ -12,6 +12,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 _extra = argparse.ArgumentParser(add_help=False, allow_abbrev=False)
 _extra.add_argument("--show-markers", action="store_true")
+_extra.add_argument("--max-steps", type=int, default=0, help="0 runs until Ctrl+C")
 _extra_args, _ = _extra.parse_known_args()
 
 from vla_sim.isaac_app import boot_app, close_app, log
@@ -29,8 +30,10 @@ def main() -> None:
     runtime.robot_controller.reset_home()
     log("Canonical scene running. Ctrl+C closes Isaac.")
     try:
-        while app.is_running():
+        step = 0
+        while app.is_running() and (_extra_args.max_steps <= 0 or step < _extra_args.max_steps):
             runtime.step()
+            step += 1
     except KeyboardInterrupt:
         log("Ctrl+C received.")
 

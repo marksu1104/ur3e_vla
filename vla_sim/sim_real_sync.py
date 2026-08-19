@@ -24,7 +24,6 @@ from vla_sim.config import (
     TARGETS,
 )
 from vla_sim.planning import build_pick_place_trajectory
-from vla_sim.runtime import ExternalStateBackend
 
 
 SUPPORTED_TASK_PAIR = (1, 2)
@@ -178,7 +177,7 @@ class ROSJointStateSubscriber:
         self._node.destroy_node()
 
 
-class JointSyncBackend(ExternalStateBackend):
+class JointSyncBackend:
     """Write only the latest valid external arm sample into Isaac."""
 
     def __init__(self, source: LatestJointState):

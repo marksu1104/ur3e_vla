@@ -36,7 +36,7 @@ def parse_cli_args():
 
 args_cli = parse_cli_args()
 
-# IsaacLab 3.0 beta kit files can miss extensions in Isaac Sim 6.0.
+# Preserve the original Isaac Sim application and its stage/render defaults.
 args_cli.experience = "isaacsim.exp.full.kit"
 
 
@@ -58,8 +58,7 @@ def boot_app():
     import carb
     settings = carb.settings.get_settings()
 
-    # The full kit may not set Isaac asset roots. Set them before importing
-    # modules that resolve ISAAC_NUCLEUS_DIR.
+    # Set asset roots before importing modules that resolve ISAAC_NUCLEUS_DIR.
     asset_url = (
         "https://omniverse-content-production.s3-us-west-2.amazonaws.com"
         "/Assets/Isaac/5.1"

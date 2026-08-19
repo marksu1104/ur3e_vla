@@ -34,7 +34,12 @@ from vla_sim.actions import PoseTrajectoryPlayer, compute_action_from_ee_poses
 from vla_sim.config import PLACE_POSITIONS, TARGETS
 from vla_sim.data_collector import EpisodeBuffer, append_episode_h5
 from vla_sim.planning import build_pick_place_trajectory, detect_success
-from vla_sim.runtime import RuntimeOptions, SimulationRuntime
+from vla_sim.runtime import (
+    RuntimeOptions,
+    SimulationRuntime,
+    as_torch,
+    pose_wxyz_from_sim,
+)
 
 
 SCENE_PROFILE = "canonical_scene_v1"
@@ -42,7 +47,7 @@ RECORD_EVERY_N_STEPS = 12  # 60 Hz simulation / 12 = 5 Hz policy data.
 
 
 def _rgb(scene, camera_name: str) -> np.ndarray:
-    return scene[camera_name].data.output["rgb"][0].cpu().numpy().astype(np.uint8)
+    return as_torch(scene[camera_name].data.output["rgb"])[0].cpu().numpy().astype(np.uint8)
 
 
 def run_one_episode(
@@ -63,8 +68,8 @@ def run_one_episode(
         runtime.step()
 
     target = scene[target_name]
-    target_resting = target.data.root_pos_w[0].cpu().numpy()
-    target_rot = target.data.root_state_w[0, 3:7].cpu().numpy()
+    target_resting = as_torch(target.data.root_pos_w)[0].cpu().numpy()
+    target_rot = pose_wxyz_from_sim(target.data.root_state_w)[0, 3:7].cpu().numpy()
     target_initial_z = float(target_resting[2])
     trajectory = build_pick_place_trajectory(
         TARGETS[target_name], target_resting, target_rot, place_xy
@@ -92,17 +97,21 @@ def run_one_episode(
         runtime.step()
         last_logical_grip = float(logical_grip)
 
-        object_pos = target.data.root_pos_w[0].cpu().numpy()
+        object_pos = as_torch(target.data.root_pos_w)[0].cpu().numpy()
         best_lift_height = max(best_lift_height, float(object_pos[2] - target_initial_z))
 
         if step % RECORD_EVERY_N_STEPS == 0:
             ee_pose = (
-                runtime.robot.data.body_state_w[0, controller.ee_body_idx, :7]
+                pose_wxyz_from_sim(runtime.robot.data.body_state_w)[
+                    0, controller.ee_body_idx
+                ]
                 .cpu()
                 .numpy()
             )
             joint_positions = (
-                runtime.robot.data.joint_pos[0, controller.arm_ids_t].cpu().numpy()
+                as_torch(runtime.robot.data.joint_pos)[0, controller.arm_ids]
+                .cpu()
+                .numpy()
             )
             grip_binary = 1.0 if logical_grip >= 0.5 else 0.0
             if previous_pos is None:

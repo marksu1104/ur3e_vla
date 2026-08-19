@@ -13,7 +13,7 @@ from isaaclab.actuators import ImplicitActuatorCfg
 from isaaclab.assets import ArticulationCfg, AssetBaseCfg, RigidObjectCfg
 from isaaclab.scene import InteractiveSceneCfg
 from isaaclab.sensors.camera import CameraCfg
-from isaaclab.utils import configclass
+from isaaclab.utils.configclass import configclass
 from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR
 
 from vla_sim.isaac_app import log
@@ -72,6 +72,27 @@ from vla_sim.config import (
 )
 
 ASSET_DIR = Path(__file__).resolve().parent.parent / "assets"
+ISAAC_QUAT_XYZW = AssetBaseCfg.InitialStateCfg().rot == (0.0, 0.0, 0.0, 1.0)
+
+
+def quat_wxyz_to_isaac(quaternion):
+    """Convert the project's wxyz convention at the Isaac API boundary."""
+    if not ISAAC_QUAT_XYZW:
+        return quaternion
+    if isinstance(quaternion, (tuple, list)):
+        w, x, y, z = quaternion
+        return (x, y, z, w)
+    return quaternion[..., [1, 2, 3, 0]]
+
+
+def quat_isaac_to_wxyz(quaternion):
+    """Convert an Isaac quaternion to the project's stable wxyz convention."""
+    if not ISAAC_QUAT_XYZW:
+        return quaternion
+    if isinstance(quaternion, (tuple, list)):
+        x, y, z, w = quaternion
+        return (w, x, y, z)
+    return quaternion[..., [3, 0, 1, 2]]
 
 
 def enable_extensions() -> None:
@@ -98,7 +119,7 @@ def _find_gripper_mount(stage) -> str:
 
 def spawn_raw_and_assemble(gripper_usd_relative: str | None = None) -> None:
     """Load and assemble the canonical UR3e and official Robotiq physics USD."""
-    from isaacsim.core.utils.stage import add_reference_to_stage
+    from isaaclab.sim.utils.prims import add_usd_reference
     from isaacsim.robot_setup.assembler import RobotAssembler
     from pxr import UsdGeom
 
@@ -107,10 +128,10 @@ def spawn_raw_and_assemble(gripper_usd_relative: str | None = None) -> None:
         UsdGeom.Xform.Define(stage, "/World")
     asset_root = str(ISAAC_NUCLEUS_DIR)
     gripper_asset = gripper_usd_relative or GRIPPER_USD_RELATIVE
-    add_reference_to_stage(
+    add_usd_reference(
         usd_path=f"{asset_root}/{UR3E_USD_RELATIVE}", prim_path=ROBOT_PRIM_PATH
     )
-    add_reference_to_stage(
+    add_usd_reference(
         usd_path=f"{asset_root}/{gripper_asset}", prim_path=GRIPPER_PRIM_PATH
     )
     kit = omni.kit.app.get_app()
@@ -135,6 +156,29 @@ def spawn_raw_and_assemble(gripper_usd_relative: str | None = None) -> None:
     for _ in range(60):
         kit.update()
 
+def spawn_assembled_robot() -> None:
+    """Load the exported UR3e + Robotiq assembly without the GUI extension."""
+    from isaaclab.sim.utils.prims import add_usd_reference
+    from pxr import UsdGeom
+
+    stage = omni.usd.get_context().get_stage()
+    if stage is None:
+        raise RuntimeError("SimulationContext must exist before loading the robot")
+    UsdGeom.Xform.Define(stage, "/World")
+    asset_path = ASSET_DIR / "ur3e_robotiq_2f140_assembled_stage.usda"
+    add_usd_reference(prim_path="/World", usd_path=str(asset_path), stage=stage)
+
+    required_paths = (
+        ROBOT_PRIM_PATH,
+        GRIPPER_PRIM_PATH,
+        f"{GRIPPER_PRIM_PATH}/finger_joint",
+        f"{GRIPPER_PRIM_PATH}/robotiq_base_link/AssemblerFixedJoint",
+    )
+    missing = [path for path in required_paths if not stage.GetPrimAtPath(path).IsValid()]
+    if missing:
+        raise RuntimeError(f"Assembled robot asset is missing prims: {missing}")
+
+
 
 def make_static_cuboid_cfg(
     prim_path: str,
@@ -158,7 +202,9 @@ def make_table_cfg(prim_path: str, pos: tuple[float, float, float]) -> AssetBase
         spawn=sim_utils.UsdFileCfg(
             usd_path=f"{ISAAC_NUCLEUS_DIR}/{TABLE_USD_RELATIVE}", scale=TABLE_SCALE
         ),
-        init_state=AssetBaseCfg.InitialStateCfg(pos=pos, rot=TABLE_ROT),
+        init_state=AssetBaseCfg.InitialStateCfg(
+            pos=pos, rot=quat_wxyz_to_isaac(TABLE_ROT)
+        ),
     )
 
 
@@ -188,7 +234,8 @@ def make_target_cfg(name: str, info: dict, prim_path: str | None = None):
         prim_path=prim_path or f"/World/{name.capitalize()}",
         spawn=spawn,
         init_state=RigidObjectCfg.InitialStateCfg(
-            pos=info["spawn_pos"], rot=info["spawn_rot"]
+            pos=info["spawn_pos"],
+            rot=quat_wxyz_to_isaac(info["spawn_rot"]),
         ),
     )
 
@@ -216,12 +263,29 @@ def _target_cfg(name: str):
 class SceneCfg(InteractiveSceneCfg):
     """The canonical single-arm scene for all runtimes."""
 
+    if ISAAC_QUAT_XYZW:
+        fill_light = AssetBaseCfg(
+            prim_path="/World/FillLight",
+            spawn=sim_utils.DomeLightCfg(
+                intensity=650.0, color=(0.75, 0.75, 0.75)
+            ),
+        )
+        camera_fill_light = AssetBaseCfg(
+            prim_path="/World/CameraFillLight",
+            spawn=sim_utils.SphereLightCfg(
+                intensity=6500.0,
+                color=(0.75, 0.75, 0.75),
+                normalize=True,
+                radius=0.75,
+            ),
+            init_state=AssetBaseCfg.InitialStateCfg(pos=(0.13, 0.84, 1.80)),
+        )
     robot = ArticulationCfg(
         prim_path="/World/Robot",
         spawn=None,
         init_state=ArticulationCfg.InitialStateCfg(
             pos=ROBOT_BASE_POS,
-            rot=ROBOT_BASE_ROT,
+            rot=quat_wxyz_to_isaac(ROBOT_BASE_ROT),
         ),
         actuators={
             "arm": ImplicitActuatorCfg(
@@ -291,7 +355,9 @@ class SceneCfg(InteractiveSceneCfg):
         data_types=["rgb"],
         spawn=sim_utils.PinholeCameraCfg(focal_length=YOLO_CAMERA_FOCAL),
         offset=CameraCfg.OffsetCfg(
-            pos=YOLO_CAMERA_POS, rot=YOLO_CAMERA_ROT, convention="opengl"
+            pos=YOLO_CAMERA_POS,
+            rot=quat_wxyz_to_isaac(YOLO_CAMERA_ROT),
+            convention="opengl",
         ),
     )
     camera_policy = CameraCfg(
@@ -302,7 +368,9 @@ class SceneCfg(InteractiveSceneCfg):
         data_types=["rgb"],
         spawn=sim_utils.PinholeCameraCfg(focal_length=CAMERA_MAIN_FOCAL),
         offset=CameraCfg.OffsetCfg(
-            pos=CAMERA_MAIN_POS, rot=CAMERA_MAIN_ROT, convention="opengl"
+            pos=CAMERA_MAIN_POS,
+            rot=quat_wxyz_to_isaac(CAMERA_MAIN_ROT),
+            convention="opengl",
         ),
     )
     camera_wrist = CameraCfg(
@@ -314,7 +382,7 @@ class SceneCfg(InteractiveSceneCfg):
         spawn=sim_utils.PinholeCameraCfg(focal_length=18.0),
         offset=CameraCfg.OffsetCfg(
             pos=(0.0, 0.0, 0.12),
-            rot=(0.0, 1.0, 0.0, 0.0),
+            rot=quat_wxyz_to_isaac((0.0, 1.0, 0.0, 0.0)),
             convention="opengl",
         ),
     )
@@ -435,7 +503,9 @@ def prepare_destination_fixtures(stage) -> None:
             box_y_center + reference_spoon_y,
             table_z + 0.017,
         ),
-        orientation=(0.7071068, 0.0, 0.0, 0.7071068),
+        orientation=quat_wxyz_to_isaac(
+            (0.7071068, 0.0, 0.0, 0.7071068)
+        ),
     )
 
     mug = TARGETS["red_mug"]
@@ -475,7 +545,7 @@ def prepare_destination_fixtures(stage) -> None:
         group_paths["reference_mug"] + "/Mug",
         mug_cfg,
         translation=reference_mug_position,
-        orientation=mug["spawn_rot"],
+        orientation=quat_wxyz_to_isaac(mug["spawn_rot"]),
     )
 
     bowl = TARGETS["bowl"]
@@ -506,7 +576,7 @@ def prepare_destination_fixtures(stage) -> None:
             group_paths["stack_bowl"] + f"/Bowl{index}",
             bowl_cfg,
             translation=(bowl_x, bowl_y, table_z + z_offset),
-            orientation=bowl["spawn_rot"],
+            orientation=quat_wxyz_to_isaac(bowl["spawn_rot"]),
         )
         bowl_collider_cfg.func(
             bowl_collider_path + f"/Bowl{index}",
@@ -516,7 +586,7 @@ def prepare_destination_fixtures(stage) -> None:
                 bowl_y,
                 table_z + z_offset + (receiving_shell_inset if index else 0.0),
             ),
-            orientation=bowl["spawn_rot"],
+            orientation=quat_wxyz_to_isaac(bowl["spawn_rot"]),
         )
 
     sim_utils.make_uninstanceable(root_path, stage)
@@ -656,7 +726,7 @@ def _smooth_meshes(stage, prim_path: str, iterations: int = 3) -> None:
 
 def prepare_target_visuals(stage) -> None:
     """Build calibrated render visuals while retaining local collision meshes."""
-    from isaacsim.core.utils.stage import add_reference_to_stage
+    from isaaclab.sim.utils.prims import add_usd_reference
     from pxr import Usd, UsdGeom, UsdPhysics
 
     for name, target in TARGETS.items():
@@ -666,7 +736,7 @@ def prepare_target_visuals(stage) -> None:
             continue
 
         visual_path = f"{root_path}/SmoothedVisual"
-        add_reference_to_stage(
+        add_usd_reference(
             usd_path=f"{ISAAC_NUCLEUS_DIR}/{target['usd_relative']}",
             prim_path=visual_path,
         )

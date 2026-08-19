@@ -64,7 +64,7 @@ from vla_sim.config import (
     TARGET_KEYS,
     TASK_INDEX_MAP,
 )
-from vla_sim.runtime import RuntimeOptions, SimulationRuntime
+from vla_sim.runtime import RuntimeOptions, SimulationRuntime, as_torch
 from vla_sim.sim_real_sync import (
     JointSyncBackend,
     LatestJointState,
@@ -82,7 +82,7 @@ def _scene_status(runtime: SimulationRuntime, backend: JointSyncBackend, seed: i
     if scene is None or controller is None:
         raise RuntimeError("canonical runtime did not initialize")
     poses = {
-        name: scene[name].data.root_pos_w[0].cpu().numpy().round(5).tolist()
+        name: as_torch(scene[name].data.root_pos_w)[0].cpu().numpy().round(5).tolist()
         for name in TARGET_KEYS
     }
     return {
@@ -257,7 +257,7 @@ def main() -> None:
             if step % stream_every == 0:
                 rgb = runtime.latest_yolo_rgb()
                 if rgb is not None:
-                    bridge.publish_frame(rgb[0].cpu().numpy().astype(np.uint8))
+                    bridge.publish_frame(as_torch(rgb)[0].cpu().numpy().astype(np.uint8))
             step += 1
     except KeyboardInterrupt:
         log("Ctrl+C received.")

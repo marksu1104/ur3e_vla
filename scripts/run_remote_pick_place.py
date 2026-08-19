@@ -51,7 +51,12 @@ from vla_sim.config import (
 from vla_sim.bridge import BridgeServer
 from vla_sim.planning import build_pick_place_trajectory, detect_success
 from vla_sim.visibility import goal_visibility_report, object_visibility_report
-from vla_sim.runtime import RuntimeOptions, SimulationRuntime
+from vla_sim.runtime import (
+    RuntimeOptions,
+    SimulationRuntime,
+    as_torch,
+    pose_wxyz_from_sim,
+)
 
 
 def main() -> None:
@@ -126,8 +131,12 @@ def main() -> None:
                 if command["type"] == "task" and state == "waiting":
                     trial = command
                     target = scene[command["object"]]
-                    resting = target.data.root_pos_w[0].cpu().numpy()
-                    rotation = target.data.root_state_w[0, 3:7].cpu().numpy()
+                    resting = as_torch(target.data.root_pos_w)[0].cpu().numpy()
+                    rotation = (
+                        pose_wxyz_from_sim(target.data.root_state_w)[0, 3:7]
+                        .cpu()
+                        .numpy()
+                    )
                     target_initial_z = float(resting[2])
                     best_lift = 0.0
                     max_gripper_command = float(GRIPPER_OPEN)
@@ -283,8 +292,7 @@ def main() -> None:
                 settle_steps -= 1
                 if settle_steps <= 0:
                     poses = {
-                        name: scene[name]
-                        .data.root_pos_w[0]
+                        name: as_torch(scene[name].data.root_pos_w)[0]
                         .cpu()
                         .numpy()
                         .round(5)
@@ -319,7 +327,9 @@ def main() -> None:
             if step % stream_every == 0:
                 rgb = runtime.latest_yolo_rgb()
                 if rgb is not None:
-                    bridge.publish_frame(rgb[0].cpu().numpy().astype(np.uint8))
+                    bridge.publish_frame(
+                        as_torch(rgb)[0].cpu().numpy().astype(np.uint8)
+                    )
             step += 1
     except KeyboardInterrupt:
         log("Ctrl+C received.")

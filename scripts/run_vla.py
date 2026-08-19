@@ -32,7 +32,12 @@ app = boot_app()
 
 from vla_sim.actions import apply_delta_action, clamp_action
 from vla_sim.config import TARGET_KEYS, WORKSPACE_X, WORKSPACE_Y, WORKSPACE_Z
-from vla_sim.runtime import RuntimeOptions, SimulationRuntime
+from vla_sim.runtime import (
+    RuntimeOptions,
+    SimulationRuntime,
+    as_torch,
+    pose_wxyz_from_sim,
+)
 from vla_sim.vla_client import VLAClient
 
 
@@ -61,7 +66,7 @@ def main() -> None:
         runtime.step()
 
     robot = runtime.robot
-    ee_pose = robot.data.body_state_w[0, controller.ee_body_idx, :7]
+    ee_pose = pose_wxyz_from_sim(robot.data.body_state_w)[0, controller.ee_body_idx]
     ee_target_pos = ee_pose[:3].clone()
     ee_target_quat = ee_pose[3:].clone()
     gripper_command = 0.0
@@ -101,7 +106,7 @@ def main() -> None:
             if step % _extra_args.vla_step_interval == 0:
                 camera = scene[_extra_args.camera].data.output.get("rgb")
                 if camera is not None:
-                    rgb = camera[0].cpu().numpy().astype(np.uint8)
+                    rgb = as_torch(camera)[0].cpu().numpy().astype(np.uint8)
                     with action_lock:
                         should_start = not vla_pending
                         if should_start:
@@ -144,7 +149,7 @@ def main() -> None:
 
             now = time.monotonic()
             if now - last_log_at >= 1.0:
-                obj = scene[target_name].data.root_pos_w[0].cpu().numpy().round(3)
+                obj = as_torch(scene[target_name].data.root_pos_w)[0].cpu().numpy().round(3)
                 log(
                     f"step={step} target={ee_target_pos.cpu().numpy().round(3).tolist()} "
                     f"grip={gripper_command:.2f} {target_name}={obj.tolist()} "

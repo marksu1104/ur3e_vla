@@ -19,7 +19,6 @@ from vla_sim.config import (
     EE_ORIENT_DOWN,
     GRIPPER_CLOSE,
     GRIPPER_OPEN,
-    GRIPPER_USD_RELATIVE,
     HOME_POS,
     HOME_Q,
     PHYSICS_DT,
@@ -34,12 +33,13 @@ from vla_sim.scene import (
     configure_gripper_pads,
     hide_markers,
     make_scene_cfg,
+    quat_isaac_to_wxyz,
+    quat_wxyz_to_isaac,
     prepare_destination_fixtures,
     prepare_target_visuals,
     set_marker_material,
     set_plastic_material,
-    enable_extensions,
-    spawn_raw_and_assemble,
+    spawn_assembled_robot,
 )
 
 
@@ -51,6 +51,30 @@ ARM_JOINT_NAMES = (
     "wrist_2_joint",
     "wrist_3_joint",
 )
+
+def as_torch(array) -> torch.Tensor:
+    """Return a zero-copy Torch view for old tensors and 3.0 array proxies."""
+    if isinstance(array, torch.Tensor):
+        return array
+    tensor = getattr(array, "torch", None)
+    if tensor is not None:
+        return tensor
+    try:
+        import warp as wp
+
+        if isinstance(array, wp.array):
+            return wp.to_torch(array)
+    except ImportError:
+        pass
+    raise TypeError(f"Unsupported simulation array type: {type(array)!r}")
+
+def pose_wxyz_from_sim(pose) -> torch.Tensor:
+    """Return a simulation pose in the project's stable xyz+wxyz layout."""
+    pose_tensor = as_torch(pose)
+    return torch.cat(
+        (pose_tensor[..., :3], quat_isaac_to_wxyz(pose_tensor[..., 3:7])), dim=-1
+    )
+
 
 
 class StateBackend(ABC):
@@ -91,7 +115,7 @@ class RobotController:
         self.arm_ids, _ = robot.find_joints(list(ARM_JOINT_NAMES))
         if len(self.arm_ids) != len(ARM_JOINT_NAMES):
             raise RuntimeError(f"Expected six UR3e arm joints, found {self.arm_ids}")
-        self.arm_ids_t = torch.tensor(self.arm_ids, dtype=torch.long, device=device)
+        self.arm_ids_t = torch.tensor(self.arm_ids, dtype=torch.int32, device=device)
 
         finger_ids, _ = robot.find_joints(["finger_joint"])
         if len(finger_ids) != 1:
@@ -99,9 +123,11 @@ class RobotController:
                 f"Expected exactly one Robotiq drive joint, found {finger_ids}"
             )
         self.finger_joint_id = finger_ids[0]
-        self.finger_ids_t = torch.tensor(finger_ids, dtype=torch.long, device=device)
+        self.finger_ids_t = torch.tensor(finger_ids, dtype=torch.int32, device=device)
         self.finger_limits = (
-            robot.data.soft_joint_pos_limits[0, self.finger_joint_id].cpu().tolist()
+            as_torch(robot.data.soft_joint_pos_limits)[
+                0, self.finger_joint_id
+            ].cpu().tolist()
         )
 
         ee_ids, _ = robot.find_bodies([EE_BODY_NAME])
@@ -119,7 +145,7 @@ class RobotController:
         self.home_q = torch.tensor([HOME_Q], device=device, dtype=torch.float32)
         self._target_pos = torch.tensor(HOME_POS, device=device, dtype=torch.float32)
         self._target_quat = torch.tensor(
-            EE_ORIENT_DOWN, device=device, dtype=torch.float32
+            quat_wxyz_to_isaac(EE_ORIENT_DOWN), device=device, dtype=torch.float32
         )
         self._logical_gripper_command = 0.0
         self._physical_gripper_command = float(GRIPPER_OPEN)
@@ -136,16 +162,20 @@ class RobotController:
 
     @property
     def finger_position(self) -> float:
-        return float(self.robot.data.joint_pos[0, self.finger_joint_id].item())
+        return float(
+            as_torch(self.robot.data.joint_pos)[0, self.finger_joint_id].item()
+        )
 
     @property
     def ee_position(self) -> np.ndarray:
-        return self.robot.data.body_state_w[0, self.ee_body_idx, :3].cpu().numpy()
+        return (
+            as_torch(self.robot.data.body_state_w)[0, self.ee_body_idx, :3].cpu().numpy()
+        )
 
     def reset_home(self) -> None:
         """Reset only the virtual robot to its existing home configuration."""
         root_pose = torch.tensor(
-            [[*ROBOT_BASE_POS, *ROBOT_BASE_ROT]],
+            [[*ROBOT_BASE_POS, *quat_wxyz_to_isaac(ROBOT_BASE_ROT)]],
             device=self.device,
             dtype=torch.float32,
         )
@@ -164,9 +194,10 @@ class RobotController:
         self._target_pos = torch.as_tensor(
             position, device=self.device, dtype=torch.float32
         )
-        self._target_quat = torch.as_tensor(
+        target_quat = torch.as_tensor(
             quaternion, device=self.device, dtype=torch.float32
         )
+        self._target_quat = quat_wxyz_to_isaac(target_quat)
 
     def set_gripper_command(
         self, command: float, dt: float | None = None, *, rate_limit: bool = True
@@ -243,8 +274,8 @@ class RobotController:
 
     def apply_physics_targets(self) -> None:
         """Apply IK arm targets and the single official Robotiq drive joint."""
-        root_pos = self.robot.data.root_state_w[:, :3]
-        ee_pose_w = self.robot.data.body_state_w[:, self.ee_body_idx, :7]
+        root_pos = as_torch(self.robot.data.root_state_w)[:, :3]
+        ee_pose_w = as_torch(self.robot.data.body_state_w)[:, self.ee_body_idx, :7]
         ee_pos_b = ee_pose_w[:, :3] - root_pos
         ee_quat_b = ee_pose_w[:, 3:]
         self.ik.set_command(
@@ -253,13 +284,13 @@ class RobotController:
                 dim=-1,
             )
         )
-        jac_full = self.robot.root_physx_view.get_jacobians()
-        jac = jac_full[:, self.ee_jac_idx, :, :][:, :, self.arm_ids_t]
+        jac_full = as_torch(self.robot.root_physx_view.get_jacobians())
+        jac = jac_full[:, self.ee_jac_idx, :, :][:, :, self.arm_ids]
         q_target = self.ik.compute(
             ee_pos_b,
             ee_quat_b,
             jac,
-            self.robot.data.joint_pos[:, self.arm_ids_t],
+            as_torch(self.robot.data.joint_pos)[:, self.arm_ids],
         )
         self.robot.set_joint_position_target(q_target, joint_ids=self.arm_ids_t)
         finger_target = torch.full(
@@ -299,15 +330,25 @@ class SimulationRuntime:
             raise RuntimeError("SimulationRuntime.start() has not completed")
         return str(self.sim.device)
 
+    def make_scene_cfg(self):
+        """Build the scene configuration used by this runtime."""
+        return make_scene_cfg(
+            num_envs=1,
+            env_spacing=2.0,
+            stream_width=self.options.stream_width,
+            stream_height=self.options.stream_height,
+        )
+
+    def prepare_scene_extras(self, stage) -> None:
+        """Hook for visual-only additions in specialized runtimes."""
+        del stage
+
     def start(self) -> "SimulationRuntime":
         """Create the exact canonical remote scene and start simulation."""
-        enable_extensions()
-        extension_manager = omni.kit.app.get_app().get_extension_manager()
-        disabled = extension_manager.set_extension_enabled_immediate(
-            "isaacsim.core.throttling", False
+        self.sim = sim_utils.SimulationContext(
+            sim_utils.SimulationCfg(device=self.options.device, dt=PHYSICS_DT)
         )
-        log(f"isaacsim.core.throttling disabled = {disabled}")
-        spawn_raw_and_assemble(gripper_usd_relative=GRIPPER_USD_RELATIVE)
+        spawn_assembled_robot()
         sim_utils.modify_articulation_root_properties(
             "/World/Robot",
             sim_utils.ArticulationRootPropertiesCfg(
@@ -318,17 +359,7 @@ class SimulationRuntime:
         )
         stage = omni.usd.get_context().get_stage()
         configure_gripper_pads(stage)
-        self.sim = sim_utils.SimulationContext(
-            sim_utils.SimulationCfg(device=self.options.device, dt=PHYSICS_DT)
-        )
-        self.scene = InteractiveScene(
-            make_scene_cfg(
-                num_envs=1,
-                env_spacing=2.0,
-                stream_width=self.options.stream_width,
-                stream_height=self.options.stream_height,
-            )
-        )
+        self.scene = InteractiveScene(self.make_scene_cfg())
         stage = omni.usd.get_context().get_stage()
         log("Applying final scene materials before camera initialization...")
         for path, color in {
@@ -343,11 +374,26 @@ class SimulationRuntime:
             prepare_destination_fixtures(stage)
         paths = bind_gripper_pad_visuals(stage)
         log(f"Robotiq finger-pad setup applied at: {paths}")
+        self.prepare_scene_extras(stage)
+        from pxr import UsdGeom
+
+        if hasattr(UsdGeom.Camera, "GetExposureIsoAttr"):
+            camera_iso = 85.0
+            cameras = [
+                UsdGeom.Camera(prim)
+                for prim in stage.Traverse()
+                if prim.IsA(UsdGeom.Camera)
+            ]
+            for camera in cameras:
+                camera.GetExposureIsoAttr().Set(camera_iso)
+
         for index, color in enumerate(PLACE_MARKER_COLORS):
             set_marker_material(stage, f"/World/MarkerP{index}", color)
         if not self.options.show_markers:
             hide_markers(stage)
         log("Final materials applied.")
+        self.sim.reset()
+        self.sim.play()
         try:
             from omni.kit.viewport.utility import get_active_viewport
 
@@ -357,8 +403,6 @@ class SimulationRuntime:
                 log("GUI viewport camera = /World/CameraYolo")
         except Exception as exc:
             log(f"GUI viewport camera unchanged: {exc}")
-        self.sim.reset()
-        self.sim.play()
         self.sim_dt = self.sim.get_physics_dt()
         self.robot_controller = RobotController(self.scene["robot"], str(self.sim.device))
         self.robot_controller.reset_home()
@@ -380,7 +424,7 @@ class SimulationRuntime:
             rot = TARGETS[name]["spawn_rot"]
             obj = self.scene[name]
             obj.write_root_pose_to_sim(
-                torch.tensor([[*pos, *rot]], device=self.device, dtype=torch.float32)
+                torch.tensor([[*pos, *quat_wxyz_to_isaac(rot)]], device=self.device)
             )
             obj.write_root_velocity_to_sim(torch.zeros((1, 6), device=self.device))
 
