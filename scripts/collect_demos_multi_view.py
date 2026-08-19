@@ -1,5 +1,6 @@
 from __future__ import annotations
-"""Collect 5 Hz H5 demonstrations, recording two extra third-person cameras.
+"""新增 top, left, right cameras & targets poses 進 data
+Collect 5 Hz H5 demonstrations, recording two extra third-person cameras.
 
 Copy of scripts/collect_demos.py that swaps in the multiview runtime,
 buffer, and H5 exporter. vla_sim/*.py is untouched; only the pieces in
@@ -20,7 +21,7 @@ cd ~/IsaacLab
   --headless --enable_cameras \
   --target red_mug \
   --episodes 10 --max-episodes-tried 15 \
-  --output-dir ~/IsaacLab/ur3e_vla/outputs/h5/multiview/canonical_scene_red_mug \
+  --output-dir ~/IsaacLab/ur3e_vla/outputs/h5/multiview/canonical_scene \
   --save-video \
   --overwrite
 """
@@ -68,9 +69,9 @@ from vla_sim.isaac_app import args_cli, boot_app, close_app, log
 app = boot_app()
 
 from vla_sim.actions import PoseTrajectoryPlayer, compute_action_from_ee_poses
-from vla_sim.config import PLACE_POSITIONS, TARGETS
+from vla_sim.config import PLACE_POSITIONS, TARGETS, TARGET_KEYS
 from vla_sim.planning import build_pick_place_trajectory, detect_success
-from vla_sim.runtime import RuntimeOptions
+from vla_sim.runtime import RuntimeOptions, as_torch, pose_wxyz_from_sim
 
 from vla_sim.data_collector import VideoRecorder
 
@@ -82,11 +83,21 @@ from vla_sim.multiview.runtime_multiview import MultiviewSimulationRuntime
 
 
 SCENE_PROFILE = "multiview_scene_v1"
-RECORD_EVERY_N_STEPS = 12  # 60 Hz simulation / 12 = 5 Hz policy data.
+RECORD_EVERY_N_STEPS = 12  # 60 Hz simulation / 12 = 5 Hz policy data
+GRIPPER_TIP_LOCAL_OFFSET = np.array([0.03, 0.0, 0.18], dtype=np.float32)
+
+def _quat_rotate(quat_wxyz: np.ndarray, vec: np.ndarray) -> np.ndarray:
+    """Rotate a 3-vector by a wxyz quaternion (world <- local)."""
+    w, x, y, z = quat_wxyz
+    qv = np.array([x, y, z], dtype=np.float32)
+    uv = np.cross(qv, vec)
+    uuv = np.cross(qv, uv)
+    return vec + 2.0 * (w * uv + uuv)
 
 
 def _rgb(scene, camera_name: str) -> np.ndarray:
-    return scene[camera_name].data.output["rgb"][0].cpu().numpy().astype(np.uint8)
+    rgb = as_torch(scene[camera_name].data.output["rgb"])
+    return rgb[0].cpu().numpy().astype(np.uint8)
 
 
 def save_episode_videos(
@@ -134,8 +145,9 @@ def run_one_episode(
         runtime.step()
 
     target = scene[target_name]
-    target_resting = target.data.root_pos_w[0].cpu().numpy()
-    target_rot = target.data.root_state_w[0, 3:7].cpu().numpy()
+    scene_objects = {name: scene[name] for name in TARGET_KEYS}
+    target_resting = as_torch(target.data.root_pos_w)[0].cpu().numpy()
+    target_rot = pose_wxyz_from_sim(target.data.root_state_w)[0, 3:7].cpu().numpy()
     target_initial_z = float(target_resting[2])
     trajectory = build_pick_place_trajectory(
         TARGETS[target_name], target_resting, target_rot, place_xy
@@ -163,17 +175,19 @@ def run_one_episode(
         runtime.step()
         last_logical_grip = float(logical_grip)
 
-        object_pos = target.data.root_pos_w[0].cpu().numpy()
+        object_pos = as_torch(target.data.root_pos_w)[0].cpu().numpy()
         best_lift_height = max(best_lift_height, float(object_pos[2] - target_initial_z))
 
         if step % RECORD_EVERY_N_STEPS == 0:
-            ee_pose = (
-                runtime.robot.data.body_state_w[0, controller.ee_body_idx, :7]
+            ee_pose = pose_wxyz_from_sim(runtime.robot.data.body_state_w)[
+                0, controller.ee_body_idx, :7
+            ].cpu().numpy()
+            # self-defined gripper tip offset
+            gripper_tip_pos = ee_pose[:3] + _quat_rotate(ee_pose[3:7], GRIPPER_TIP_LOCAL_OFFSET)
+            joint_positions = (
+                as_torch(runtime.robot.data.joint_pos)[0, controller.arm_ids]
                 .cpu()
                 .numpy()
-            )
-            joint_positions = (
-                runtime.robot.data.joint_pos[0, controller.arm_ids_t].cpu().numpy()
             )
             grip_binary = 1.0 if logical_grip >= 0.5 else 0.0
             if previous_pos is None:
@@ -193,10 +207,16 @@ def run_one_episode(
             buffer.left_images.append(_rgb(scene, "camera_left"))
             buffer.right_images.append(_rgb(scene, "camera_right"))
             buffer.ee_poses.append(ee_pose.tolist())
+            buffer.gripper_tip_positions.append(gripper_tip_pos.tolist())
             buffer.joint_positions.append(joint_positions.tolist())
             buffer.gripper_states.append(grip_binary)
             buffer.actions_7d.append(action.tolist())
             buffer.timestamps.append(sim_time)
+            for obj_name, obj in scene_objects.items():
+                object_pose = pose_wxyz_from_sim(obj.data.root_state_w)[0]
+                buffer.object_poses[obj_name].append(
+                    object_pose.cpu().numpy().tolist()
+                )
             previous_pos = ee_pose[:3].copy()
             previous_quat = ee_pose[3:7].copy()
 
@@ -255,14 +275,17 @@ def main() -> None:
     )
     log(f"Multiview H5 scene: {SCENE_PROFILE}")
     log(f"Target={target_name} episodes={_extra_args.episodes} output={output_dir}")
-    runtime = MultiviewSimulationRuntime(RuntimeOptions()).start()
+    runtime = MultiviewSimulationRuntime(
+        RuntimeOptions(show_destination_fixtures=True)  # Set False to disable background objects
+    ).start()
     successes = 0
     attempts = 0
     started = time.monotonic()
 
     while successes < _extra_args.episodes and attempts < max_tries:
         attempts += 1
-        place_xy = PLACE_POSITIONS[successes % len(PLACE_POSITIONS)]
+        #place_xy = PLACE_POSITIONS[successes % len(PLACE_POSITIONS)]
+        place_xy = PLACE_POSITIONS[1]  # 0: spoon, 1: mug, 2: bowl
         success, buffer, diag = run_one_episode(
             runtime, target_name, place_xy, instruction
         )

@@ -1,4 +1,5 @@
-"""Episode buffer + HDF5 export additions for the two extra camera views.
+"""新增 top, left, right cameras & targets poses
+Episode buffer + HDF5 export additions for the two extra camera views.
 
 Does not modify vla_sim/data_collector.py. ``EpisodeBuffer`` is a plain
 dataclass with 7 required fields and no extension point, and
@@ -21,7 +22,12 @@ from pathlib import Path
 
 import numpy as np
 
+from vla_sim.config import TARGET_KEYS
 from vla_sim.data_collector import EpisodeBuffer, append_episode_h5
+
+
+def _empty_pose_lists() -> dict:
+    return {name: [] for name in TARGET_KEYS}
 
 
 @dataclass
@@ -31,6 +37,8 @@ class MultiviewEpisodeBuffer(EpisodeBuffer):
     top_images: list = field(default_factory=list)
     left_images: list = field(default_factory=list)
     right_images: list = field(default_factory=list)
+    object_poses: dict = field(default_factory=_empty_pose_lists)
+    gripper_tip_positions: list = field(default_factory=list)
 
 
 def append_episode_h5_multiview(
@@ -75,7 +83,14 @@ def append_episode_h5_multiview(
             compression_opts=4,
             chunks=(1, *right.shape[1:]),
         )
+        obj_group = h5_file.require_group(f"data/{group_name}/object_poses")
+        for name in TARGET_KEYS:
+            poses = np.asarray(buffer.object_poses[name], dtype=np.float32)
+            obj_group.create_dataset(name, data=poses)
+        tip_pos = np.asarray(buffer.gripper_tip_positions, dtype=np.float32)
+        h5_file[f"data/{group_name}"].create_dataset("gripper_tip_position", data=tip_pos)
         h5_file.attrs["fields"] = (
             "image, other/hand_image, other/top_image, other/left_image, other/right_image, "
+            "object_poses/<red_mug|spoon|bowl> (per-step, xyz+wxyz quat), "
             "robot_state, action, task"
         )

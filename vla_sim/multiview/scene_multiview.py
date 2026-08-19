@@ -13,10 +13,10 @@ from __future__ import annotations
 
 import isaaclab.sim as sim_utils
 from isaaclab.sensors.camera import CameraCfg
-from isaaclab.utils import configclass
+from isaaclab.utils.configclass import configclass
 
 from vla_sim.config import CAMERA_HEIGHT, CAMERA_MAIN_FOCAL, CAMERA_WIDTH
-from vla_sim.scene import SceneCfg
+from vla_sim.scene import SceneCfg, quat_wxyz_to_isaac
 
 from vla_sim.multiview import config_multiview as mvcfg
 
@@ -34,7 +34,7 @@ class MultiviewSceneCfg(SceneCfg):
         spawn=sim_utils.PinholeCameraCfg(focal_length=CAMERA_MAIN_FOCAL),
         offset=CameraCfg.OffsetCfg(
             pos=mvcfg.CAMERA_TOP_POS,
-            rot=mvcfg.CAMERA_TOP_ROT,
+            rot=quat_wxyz_to_isaac(mvcfg.CAMERA_TOP_ROT),
             convention="opengl",
         ),
     )
@@ -47,7 +47,7 @@ class MultiviewSceneCfg(SceneCfg):
         spawn=sim_utils.PinholeCameraCfg(focal_length=CAMERA_MAIN_FOCAL),
         offset=CameraCfg.OffsetCfg(
             pos=mvcfg.CAMERA_LEFT_POS,
-            rot=mvcfg.CAMERA_LEFT_ROT,
+            rot=quat_wxyz_to_isaac(mvcfg.CAMERA_LEFT_ROT),
             convention="opengl",
         ),
     )
@@ -60,7 +60,7 @@ class MultiviewSceneCfg(SceneCfg):
         spawn=sim_utils.PinholeCameraCfg(focal_length=CAMERA_MAIN_FOCAL),
         offset=CameraCfg.OffsetCfg(
             pos=mvcfg.CAMERA_RIGHT_POS,
-            rot=mvcfg.CAMERA_RIGHT_ROT,
+            rot=quat_wxyz_to_isaac(mvcfg.CAMERA_RIGHT_ROT),
             convention="opengl",
         ),
     )
