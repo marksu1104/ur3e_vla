@@ -36,6 +36,35 @@ Maintenance and validation utilities, including the assembled-USD exporter, are
 under `scripts/tools/`. Both collectors use the canonical objects, policy camera,
 planning, and Robotiq joint settings.
 
+## Scene Customization
+
+The project keeps one physical scene and composes small, named profiles for each
+workflow. This prevents a remote-only camera or light adjustment from silently
+changing data collection or VLA rollout.
+
+| Change | Authoritative location |
+| --- | --- |
+| Positions, materials, lighting values, and profile membership | `vla_sim/config.py` |
+| Robot, object, light, and camera construction | `vla_sim/scene.py` |
+| Render materials, smoothing, and visual-only presentation | `vla_sim/visuals.py` |
+| Remote destination/reference props | `vla_sim/fixtures.py` |
+| Simulation stepping, controllers, and state backends | `vla_sim/runtime.py` |
+| Workflow-only behavior and CLI | the corresponding file under `scripts/` |
+| MultiView experiment | `vla_sim/multiview/` and `scripts/collect_demos_multi_view.py` |
+
+Add a reusable camera builder in `scene.py`, then list it only in the profiles
+that need it in `config.py`. Give a workflow its own `LightingSettings` when its
+lighting must differ. Put shared physical objects in the canonical scene; put
+presentation-only destination props in `fixtures.py`. New entry points should
+select a profile and reuse the runtime instead of copying a `SceneCfg` or robot
+configuration. MultiView remains isolated so its ongoing development is not
+changed by routine canonical-scene work.
+
+This follows Isaac Lab's compositional `configclass` and `InteractiveSceneCfg`
+model while retaining the Standalone workflow needed for explicit bridge and
+robot-control loops. See the official [configuration design](https://isaac-sim.github.io/IsaacLab/main/source/setup/walkthrough/api_env_design.html)
+and [sensor composition tutorial](https://isaac-sim.github.io/IsaacLab/main/source/tutorials/04_sensors/add_sensors_on_robot.html).
+
 ## Common Environment
 
 ```bash
@@ -126,10 +155,29 @@ verification checklist is in
 The currently supported sim-to-real task and reset procedure are documented in
 [docs/sim_real_sync.md](docs/sim_real_sync.md).
 
+## 3D-Printable Scene Parts
+
+Export the exact visible spoon, mug, bowl, cutlery tray, and coaster geometry as
+millimetre-scale STL files:
+
+```bash
+cd ~/IsaacLab/ur3e_vla
+python3 scripts/tools/export_printable_assets.py --overwrite
+```
+
+Files are written to `outputs/printable/` with a `manifest.json` containing
+quantity, source, dimensions, triangle counts, and watertight checks. Open the
+STLs in a slicer to choose orientation, supports, wall settings, and print
+tolerances. The export intentionally uses rendered geometry rather than the
+simplified physics collision meshes. Review the source terms recorded in the
+manifest before redistributing derived YCB/NVIDIA geometry.
+
 ## Development Notes
 
 - Keep generated data and models under `outputs/`; it is ignored by Git.
 - Put smoke-test artifacts under `outputs/test/`.
 - Do not commit model exports or generated H5 data.
+- Treat `SCENE_PROFILES` as workflow composition, not as a second set of scene
+  constants. Change a shared physical property once at its authoritative source.
 - `bridge.py` is the persistent transport contract. Do not replace it
   with the manual Python client in production.

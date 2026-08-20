@@ -21,3 +21,22 @@ under a 0.06 kg rigid body. Runtime material binding replaces the source wood
 material with the project's single-color matte blue print material. The project
 copy removes the original material graph and external texture references, but
 does not alter the source mesh geometry or authored normals.
+
+## YCB `024_bowl` and `025_mug`
+
+The canonical bowl and mug render meshes are loaded at runtime from NVIDIA's
+Isaac 5.1 asset collection. Their underlying object identifiers and geometry
+come from the Yale-CMU-Berkeley (YCB) Object and Model Set:
+
+- Object catalogue: https://www.ycbbenchmarks.com/object-set/
+- Model database description: https://www.ycbbenchmarks.com/object-models/
+
+`scripts/tools/export_printable_assets.py` can create local, smoothed STL
+derivatives for experiment reproduction. Generated files stay under the ignored
+`outputs/printable/` directory. The public YCB pages describe research and
+simulation use but do not state sufficiently explicit redistribution terms for
+these derived files; verify the current YCB and NVIDIA asset terms before
+publishing or transferring the generated mug or bowl STL outside the project.
+
+When reporting experiments using these objects, cite the YCB papers listed on
+the official model-database page.
