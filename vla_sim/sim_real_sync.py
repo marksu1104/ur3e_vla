@@ -17,6 +17,7 @@ import numpy as np
 
 from vla_sim.actions import clamp_action, compute_action_from_ee_poses
 from vla_sim.config import (
+    ARM_JOINT_NAMES,
     EE_ORIENT_DOWN,
     HOME_POS,
     PLACE_POSITIONS,
@@ -24,17 +25,10 @@ from vla_sim.config import (
     TARGETS,
 )
 from vla_sim.planning import build_pick_place_trajectory
+from vla_sim.runtime import ExternalStateBackend, pose_wxyz_from_sim
 
 
 SUPPORTED_TASK_PAIR = (1, 2)
-UR3E_ARM_JOINT_NAMES = (
-    "shoulder_pan_joint",
-    "shoulder_lift_joint",
-    "elbow_joint",
-    "wrist_1_joint",
-    "wrist_2_joint",
-    "wrist_3_joint",
-)
 
 
 @dataclass(frozen=True)
@@ -75,7 +69,7 @@ class LatestJointState:
 
     def __init__(
         self,
-        joint_names: tuple[str, ...] = UR3E_ARM_JOINT_NAMES,
+        joint_names: tuple[str, ...] = ARM_JOINT_NAMES,
         *,
         stale_timeout: float = 0.5,
     ):
@@ -177,7 +171,7 @@ class ROSJointStateSubscriber:
         self._node.destroy_node()
 
 
-class JointSyncBackend:
+class JointSyncBackend(ExternalStateBackend):
     """Write only the latest valid external arm sample into Isaac."""
 
     def __init__(self, source: LatestJointState):
@@ -427,7 +421,7 @@ class SimToRealTrial:
         trajectory = build_pick_place_trajectory(
             TARGETS[name],
             target.data.root_pos_w[0].cpu().numpy(),
-            target.data.root_state_w[0, 3:7].cpu().numpy(),
+            pose_wxyz_from_sim(target.data.root_state_w)[0, 3:7].cpu().numpy(),
             PLACE_POSITIONS[command["position_index"]],
             grasp_z_offset=self.options.grasp_z_offset,
             place_z_offset=self.options.place_z_offset,
@@ -506,7 +500,7 @@ class SimToRealTrial:
             self._drive(follow, pos, quat, yaw_error, angular, now, step_index)
 
     def _ee_pose(self) -> tuple[np.ndarray, np.ndarray]:
-        pose = self.controller.robot.data.body_state_w[
+        pose = pose_wxyz_from_sim(self.controller.robot.data.body_state_w)[
             0, self.controller.ee_body_idx, :7
         ].cpu().numpy()
         return pose[:3], pose[3:7]

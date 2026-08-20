@@ -21,7 +21,7 @@ _extra.add_argument("--show-markers", action="store_true")
 _extra.add_argument("--seed", type=int, default=42)
 _extra_args, _ = _extra.parse_known_args()
 
-from vla_sim.isaac_app import boot_app, close_app, log
+from vla_sim.isaac_app import args_cli, boot_app, close_app, log
 
 app = boot_app()
 
@@ -91,10 +91,11 @@ def main() -> None:
     try:
         runtime = SimulationRuntime(
             RuntimeOptions(
+                scene_profile="remote",
                 stream_width=_extra_args.stream_width,
                 stream_height=_extra_args.stream_height,
                 show_markers=_extra_args.show_markers,
-                show_destination_fixtures=True,
+                device=args_cli.device,
             )
         ).start()
         scene = runtime.scene

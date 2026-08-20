@@ -55,23 +55,19 @@ import numpy as np
 import torch
 
 import isaaclab.sim as sim_utils
-from isaaclab.assets import ArticulationCfg, AssetBaseCfg
-from isaaclab.actuators import ImplicitActuatorCfg
+from isaaclab.assets import AssetBaseCfg
 from isaaclab.controllers import DifferentialIKController, DifferentialIKControllerCfg
 from isaaclab.scene import InteractiveScene, InteractiveSceneCfg
-from isaaclab.sensors.camera import CameraCfg
 from isaaclab.utils.configclass import configclass
 
 from vla_sim.actions import PoseTrajectoryPlayer, compute_action_from_ee_poses
 from vla_sim.config import (
+    ARM_JOINT_NAMES,
     BACKDROP_BACK_POS,
     BACKDROP_BACK_SIZE,
     BACKDROP_SIDE_POS,
     BACKDROP_SIDE_SIZE,
     CAMERA_HEIGHT,
-    CAMERA_MAIN_FOCAL,
-    CAMERA_MAIN_POS,
-    CAMERA_MAIN_ROT,
     CAMERA_WIDTH,
     EE_BODY_NAME,
     GRIPPER_CLOSE,
@@ -97,24 +93,19 @@ from vla_sim.planning import (
     evaluate_pick_place_success,
 )
 from vla_sim.scene import (
-    apply_target_colors,
+    make_policy_camera_cfg,
+    make_robot_cfg,
     make_static_cuboid_cfg,
     make_table_cfg,
     make_target_cfg,
+    make_wrist_camera_cfg,
     quat_wxyz_to_isaac,
 )
 from vla_sim.runtime import as_torch, pose_wxyz_from_sim
+from vla_sim.visuals import apply_target_colors
 
 np.random.seed(_extra_args.seed)
 
-ARM_JOINT_NAMES = [
-    "shoulder_pan_joint",
-    "shoulder_lift_joint",
-    "elbow_joint",
-    "wrist_1_joint",
-    "wrist_2_joint",
-    "wrist_3_joint",
-]
 ASSEMBLED_PRIM = "{ENV_REGEX_NS}/Assembled"
 ROBOT_PRIM = f"{ASSEMBLED_PRIM}/Robot"
 
@@ -132,50 +123,6 @@ def _tile_env_rgb(rgb_all: np.ndarray) -> np.ndarray:
     return np.concatenate([frames[i] for i in range(frames.shape[0])], axis=1)
 
 
-def _make_robot_cfg() -> ArticulationCfg:
-    return ArticulationCfg(
-        prim_path=ROBOT_PRIM,
-        spawn=None,
-        init_state=ArticulationCfg.InitialStateCfg(
-            pos=ROBOT_BASE_POS, rot=quat_wxyz_to_isaac(ROBOT_BASE_ROT)
-        ),
-        actuators={
-            "arm": ImplicitActuatorCfg(
-                joint_names_expr=ARM_JOINT_NAMES,
-                stiffness=10000.0,
-                damping=500.0,
-                effort_limit_sim=150.0,
-                velocity_limit_sim=3.14,
-            ),
-            "gripper_drive": ImplicitActuatorCfg(
-                joint_names_expr=["finger_joint"],
-                stiffness=11.25,
-                damping=0.1,
-                effort_limit_sim=10.0,
-                velocity_limit_sim=1.0,
-            ),
-            "gripper_finger": ImplicitActuatorCfg(
-                joint_names_expr=[".*_inner_finger_joint"],
-                stiffness=0.2,
-                damping=0.001,
-                effort_limit_sim=1.0,
-                velocity_limit_sim=1.0,
-            ),
-            "gripper_passive": ImplicitActuatorCfg(
-                joint_names_expr=[
-                    ".*_inner_finger_pad_joint",
-                    ".*_outer_finger_joint",
-                    "right_outer_knuckle_joint",
-                ],
-                stiffness=0.0,
-                damping=0.0,
-                effort_limit_sim=1.0,
-                velocity_limit_sim=1.0,
-            ),
-        },
-    )
-
-
 @configclass
 class MultiEnvSceneCfg(InteractiveSceneCfg):
     ground = AssetBaseCfg(prim_path="/World/ground", spawn=sim_utils.GroundPlaneCfg())
@@ -187,7 +134,7 @@ class MultiEnvSceneCfg(InteractiveSceneCfg):
         prim_path=ASSEMBLED_PRIM,
         spawn=sim_utils.UsdFileCfg(usd_path=_asset_path()),
     )
-    robot = _make_robot_cfg()
+    robot = make_robot_cfg(ROBOT_PRIM)
 
     table_a = make_table_cfg("{ENV_REGEX_NS}/TableA", TABLE_A_POS)
     table_b = make_table_cfg("{ENV_REGEX_NS}/TableB", TABLE_B_POS)
@@ -200,31 +147,9 @@ class MultiEnvSceneCfg(InteractiveSceneCfg):
     red_mug = make_target_cfg("red_mug", TARGETS["red_mug"], "{ENV_REGEX_NS}/Red_mug")
     bowl = make_target_cfg("bowl", TARGETS["bowl"], "{ENV_REGEX_NS}/Bowl")
 
-    camera_policy = CameraCfg(
-        prim_path="{ENV_REGEX_NS}/CameraMain",
-        update_period=0.0,
-        height=CAMERA_HEIGHT,
-        width=CAMERA_WIDTH,
-        data_types=["rgb"],
-        spawn=sim_utils.PinholeCameraCfg(focal_length=CAMERA_MAIN_FOCAL),
-        offset=CameraCfg.OffsetCfg(
-            pos=CAMERA_MAIN_POS,
-            rot=quat_wxyz_to_isaac(CAMERA_MAIN_ROT),
-            convention="opengl",
-        ),
-    )
-    camera_wrist = CameraCfg(
-        prim_path=f"{ROBOT_PRIM}/wrist_3_link/CameraWrist",
-        update_period=0.0,
-        height=WRIST_CAMERA_HEIGHT,
-        width=WRIST_CAMERA_WIDTH,
-        data_types=["rgb"],
-        spawn=sim_utils.PinholeCameraCfg(focal_length=18.0),
-        offset=CameraCfg.OffsetCfg(
-            pos=(0.0, 0.0, 0.12),
-            rot=quat_wxyz_to_isaac((0.0, 1.0, 0.0, 0.0)),
-            convention="opengl",
-        ),
+    camera_policy = make_policy_camera_cfg("{ENV_REGEX_NS}/CameraMain")
+    camera_wrist = make_wrist_camera_cfg(
+        f"{ROBOT_PRIM}/wrist_3_link/CameraWrist"
     )
 
 
@@ -519,7 +444,9 @@ def main():
         video_label = "all-envs tiled" if video_env < 0 else f"env{video_env}"
         log(f"Video camera/env: {_extra_args.video_camera} / {video_label}")
 
-    sim = sim_utils.SimulationContext(sim_utils.SimulationCfg(device="cuda:0", dt=PHYSICS_DT))
+    sim = sim_utils.SimulationContext(
+        sim_utils.SimulationCfg(device=args_cli.device, dt=PHYSICS_DT)
+    )
     scene = InteractiveScene(MultiEnvSceneCfg(num_envs=num_envs, env_spacing=2.0))
     stage = omni.usd.get_context().get_stage()
     log("Phase: sim.reset() + sim.play()")

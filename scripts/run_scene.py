@@ -15,7 +15,7 @@ _extra.add_argument("--show-markers", action="store_true")
 _extra.add_argument("--max-steps", type=int, default=0, help="0 runs until Ctrl+C")
 _extra_args, _ = _extra.parse_known_args()
 
-from vla_sim.isaac_app import boot_app, close_app, log
+from vla_sim.isaac_app import args_cli, boot_app, close_app, log
 
 app = boot_app()
 
@@ -24,7 +24,11 @@ from vla_sim.runtime import RuntimeOptions, SimulationRuntime
 
 def main() -> None:
     runtime = SimulationRuntime(
-        RuntimeOptions(show_markers=_extra_args.show_markers)
+        RuntimeOptions(
+            scene_profile="canonical",
+            show_markers=_extra_args.show_markers,
+            device=args_cli.device,
+        )
     ).start()
     runtime.reset_targets()
     runtime.robot_controller.reset_home()

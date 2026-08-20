@@ -1,4 +1,8 @@
-"""Project constants that are safe to import before Isaac Lab starts."""
+"""Project constants and named scene profiles safe before Isaac Lab starts."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
 
 # Simulation timing.
 PHYSICS_DT = 1.0 / 60.0
@@ -33,6 +37,14 @@ VARIANT_NAME = "ur3e_with_2f140"
 # Robot pose and kinematics.
 ROBOT_BASE_POS = (0.0, 0.0, 1.05)
 ROBOT_BASE_ROT = (0.9239, 0.0, 0.0, -0.3827)
+ARM_JOINT_NAMES = (
+    "shoulder_pan_joint",
+    "shoulder_lift_joint",
+    "elbow_joint",
+    "wrist_1_joint",
+    "wrist_2_joint",
+    "wrist_3_joint",
+)
 
 # Workspace furniture.
 TABLE_USD_RELATIVE = "Props/Mounts/ThorlabsTable/table_instanceable.usd"
@@ -207,3 +219,87 @@ PLACE_MARKER_COLORS = (
 )
 PLACE_MARKER_RADIUS = 0.045
 PLACE_MARKER_THICKNESS = 0.002
+
+
+@dataclass(frozen=True)
+class LightingSettings:
+    """Renderer-independent lighting values for one scene profile."""
+
+    dome_intensity: float = 650.0
+    dome_color: tuple[float, float, float] = (0.75, 0.75, 0.75)
+    fill_intensity: float = 6500.0
+    fill_color: tuple[float, float, float] = (0.75, 0.75, 0.75)
+    fill_position: tuple[float, float, float] = (0.13, 0.84, 1.80)
+    fill_radius: float = 0.75
+    exposure_iso: float = 85.0
+
+
+@dataclass(frozen=True)
+class SceneProfile:
+    """Feature composition for a standalone runtime.
+
+    Every profile reuses the same robot, objects, tables, and backdrops. It may
+    select sensors and presentation features, and may explicitly enable the
+    remote destination fixtures whose fixed colliders are part of that one
+    workflow. This prevents local additions from silently affecting every
+    entry point.
+    """
+
+    name: str
+    cameras: tuple[str, ...]
+    show_destination_fixtures: bool = False
+    show_markers: bool = False
+    viewport_camera: str | None = None
+    lighting: LightingSettings = LightingSettings()
+
+
+SCENE_PROFILES = {
+    # Full backwards-compatible composition for inspection and extensions.
+    "canonical": SceneProfile(
+        name="canonical",
+        cameras=("camera_yolo", "camera_policy", "camera_wrist"),
+        viewport_camera="camera_yolo",
+    ),
+    # Persistent Unity/YOLO bridge; policy and wrist images are not consumed.
+    "remote": SceneProfile(
+        name="remote",
+        cameras=("camera_yolo",),
+        show_destination_fixtures=True,
+        viewport_camera="camera_yolo",
+    ),
+    # OpenVLA consumes only the fixed policy camera.
+    "vla": SceneProfile(
+        name="vla",
+        cameras=("camera_policy",),
+        viewport_camera="camera_policy",
+    ),
+    # H5 records the policy and wrist images, but does not stream YOLO frames.
+    "collection": SceneProfile(
+        name="collection",
+        cameras=("camera_policy", "camera_wrist"),
+        viewport_camera="camera_policy",
+    ),
+    # Physical/virtual synchronization keeps the persistent YOLO stream.
+    "sync": SceneProfile(
+        name="sync",
+        cameras=("camera_yolo",),
+        viewport_camera="camera_yolo",
+    ),
+    # Geometry export needs the composed objects and fixtures, but no cameras.
+    "printable": SceneProfile(
+        name="printable",
+        cameras=(),
+        show_destination_fixtures=True,
+    ),
+}
+
+
+def get_scene_profile(profile: str | SceneProfile) -> SceneProfile:
+    """Resolve a profile name and fail early on configuration typos."""
+    if isinstance(profile, SceneProfile):
+        return profile
+    try:
+        return SCENE_PROFILES[profile]
+    except KeyError as exc:
+        choices = ", ".join(SCENE_PROFILES)
+        raise ValueError(f"unknown scene profile {profile!r}; choose from {choices}") from exc

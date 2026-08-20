@@ -190,7 +190,9 @@ def main() -> None:
     )
     log(f"Canonical H5 scene: {SCENE_PROFILE}")
     log(f"Target={target_name} episodes={_extra_args.episodes} output={output_dir}")
-    runtime = SimulationRuntime(RuntimeOptions()).start()
+    runtime = SimulationRuntime(
+        RuntimeOptions(scene_profile="collection", device=args_cli.device)
+    ).start()
     successes = 0
     attempts = 0
     started = time.monotonic()

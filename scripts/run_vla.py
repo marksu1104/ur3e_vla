@@ -55,7 +55,9 @@ def main() -> None:
     if not vla.health_check(log):
         log("[VLA] server unavailable; the last zero action will be reused.")
 
-    runtime = SimulationRuntime(RuntimeOptions()).start()
+    runtime = SimulationRuntime(
+        RuntimeOptions(scene_profile="vla", device=args_cli.device)
+    ).start()
     runtime.reset_targets()
     controller = runtime.robot_controller
     scene = runtime.scene

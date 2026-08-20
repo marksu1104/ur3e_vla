@@ -48,7 +48,7 @@ _extra.add_argument(
 )
 _extra_args, _ = _extra.parse_known_args()
 
-from vla_sim.isaac_app import boot_app, close_app, log
+from vla_sim.isaac_app import args_cli, boot_app, close_app, log
 
 app = boot_app()
 
@@ -168,9 +168,11 @@ def main() -> None:
     try:
         runtime = SimulationRuntime(
             RuntimeOptions(
+                scene_profile="sync",
                 stream_width=_extra_args.stream_width,
                 stream_height=_extra_args.stream_height,
                 show_markers=_extra_args.show_markers,
+                device=args_cli.device,
             ),
             state_backend=backend,
         ).start()

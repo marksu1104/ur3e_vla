@@ -15,6 +15,7 @@ from isaaclab.controllers import DifferentialIKController, DifferentialIKControl
 from isaaclab.scene import InteractiveScene
 
 from vla_sim.config import (
+    ARM_JOINT_NAMES,
     EE_BODY_NAME,
     EE_ORIENT_DOWN,
     GRIPPER_CLOSE,
@@ -25,32 +26,26 @@ from vla_sim.config import (
     PLACE_MARKER_COLORS,
     ROBOT_BASE_POS,
     ROBOT_BASE_ROT,
+    get_scene_profile,
 )
 from vla_sim.isaac_app import log
+from vla_sim.fixtures import prepare_destination_fixtures
 from vla_sim.planning import GRIPPER_SPEED_RAD_S
 from vla_sim.scene import (
-    bind_gripper_pad_visuals,
-    configure_gripper_pads,
-    hide_markers,
     make_scene_cfg,
     quat_isaac_to_wxyz,
     quat_wxyz_to_isaac,
-    prepare_destination_fixtures,
+    spawn_assembled_robot,
+)
+from vla_sim.visuals import (
+    bind_gripper_pad_visuals,
+    configure_gripper_pads,
+    hide_markers,
     prepare_target_visuals,
     set_marker_material,
     set_plastic_material,
-    spawn_assembled_robot,
 )
 
-
-ARM_JOINT_NAMES = (
-    "shoulder_pan_joint",
-    "shoulder_lift_joint",
-    "elbow_joint",
-    "wrist_1_joint",
-    "wrist_2_joint",
-    "wrist_3_joint",
-)
 
 def as_torch(array) -> torch.Tensor:
     """Return a zero-copy Torch view for old tensors and 3.0 array proxies."""
@@ -68,14 +63,13 @@ def as_torch(array) -> torch.Tensor:
         pass
     raise TypeError(f"Unsupported simulation array type: {type(array)!r}")
 
+
 def pose_wxyz_from_sim(pose) -> torch.Tensor:
     """Return a simulation pose in the project's stable xyz+wxyz layout."""
     pose_tensor = as_torch(pose)
     return torch.cat(
         (pose_tensor[..., :3], quat_isaac_to_wxyz(pose_tensor[..., 3:7])), dim=-1
     )
-
-
 
 class StateBackend(ABC):
     """Apply one authoritative robot state before each simulation step."""
@@ -99,10 +93,11 @@ class ExternalStateBackend(StateBackend, ABC):
 class RuntimeOptions:
     """Scene options shared by all canonical-scene entry points."""
 
+    scene_profile: str = "canonical"
     stream_width: int | None = None
     stream_height: int | None = None
-    show_markers: bool = False
-    show_destination_fixtures: bool = False
+    show_markers: bool | None = None
+    show_destination_fixtures: bool | None = None
     device: str = "cuda:0"
 
 
@@ -312,6 +307,7 @@ class SimulationRuntime:
         state_backend: StateBackend | None = None,
     ):
         self.options = options or RuntimeOptions()
+        self.profile = get_scene_profile(self.options.scene_profile)
         self.state_backend = state_backend or PhysicsDriveBackend()
         self.sim = None
         self.scene = None
@@ -337,6 +333,7 @@ class SimulationRuntime:
             env_spacing=2.0,
             stream_width=self.options.stream_width,
             stream_height=self.options.stream_height,
+            profile=self.profile,
         )
 
     def prepare_scene_extras(self, stage) -> None:
@@ -370,7 +367,12 @@ class SimulationRuntime:
         }.items():
             set_plastic_material(stage, path, color)
         prepare_target_visuals(stage)
-        if self.options.show_destination_fixtures:
+        show_fixtures = (
+            self.profile.show_destination_fixtures
+            if self.options.show_destination_fixtures is None
+            else self.options.show_destination_fixtures
+        )
+        if show_fixtures:
             prepare_destination_fixtures(stage)
         paths = bind_gripper_pad_visuals(stage)
         log(f"Robotiq finger-pad setup applied at: {paths}")
@@ -378,7 +380,7 @@ class SimulationRuntime:
         from pxr import UsdGeom
 
         if hasattr(UsdGeom.Camera, "GetExposureIsoAttr"):
-            camera_iso = 85.0
+            camera_iso = self.profile.lighting.exposure_iso
             cameras = [
                 UsdGeom.Camera(prim)
                 for prim in stage.Traverse()
@@ -389,7 +391,12 @@ class SimulationRuntime:
 
         for index, color in enumerate(PLACE_MARKER_COLORS):
             set_marker_material(stage, f"/World/MarkerP{index}", color)
-        if not self.options.show_markers:
+        show_markers = (
+            self.profile.show_markers
+            if self.options.show_markers is None
+            else self.options.show_markers
+        )
+        if not show_markers:
             hide_markers(stage)
         log("Final materials applied.")
         self.sim.reset()
@@ -398,14 +405,20 @@ class SimulationRuntime:
             from omni.kit.viewport.utility import get_active_viewport
 
             viewport = get_active_viewport()
-            if viewport is not None:
-                viewport.set_active_camera("/World/CameraYolo")
-                log("GUI viewport camera = /World/CameraYolo")
+            if viewport is not None and self.profile.viewport_camera is not None:
+                camera_key = self.profile.viewport_camera
+                camera_prim = self.scene[camera_key].cfg.prim_path
+                viewport.set_active_camera(camera_prim)
+                log(f"GUI viewport camera = {camera_prim}")
         except Exception as exc:
             log(f"GUI viewport camera unchanged: {exc}")
         self.sim_dt = self.sim.get_physics_dt()
         self.robot_controller = RobotController(self.scene["robot"], str(self.sim.device))
         self.robot_controller.reset_home()
+        log(
+            f"Scene profile={self.profile.name} "
+            f"cameras={list(self.profile.cameras)} fixtures={show_fixtures}"
+        )
         log(
             "Robotiq finger_joint "
             f"id={self.robot_controller.finger_joint_id} "
