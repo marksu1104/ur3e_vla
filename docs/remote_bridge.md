@@ -36,13 +36,10 @@ ssh -tt -o ExitOnForwardFailure=yes -o ServerAliveInterval=15 -o ServerAliveCoun
 登入遠端後，在同一個 SSH session 執行：
 
 ~~~bash
-source /opt/ros/jazzy/setup.bash
-source ~/ros2_jazzy_ws/install/setup.bash
-source ~/miniconda3/etc/profile.d/conda.sh
-conda activate env_isaaclab_ros2
-cd ~/IsaacLab
+cd ~/IsaacLab/ur3e_vla
+source /opt/isaac_ros2/setup.bash
 
-./isaaclab.sh -p ./ur3e_vla/scripts/run_remote_pick_place.py \
+isaaclab scripts/run_remote_pick_place.py \
   --headless \
   --enable_cameras
 ~~~

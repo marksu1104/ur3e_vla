@@ -219,6 +219,18 @@ fi
 source "${ISAAC_ROS2_RELEASE}/env/bin/activate"
 hash -r
 
+# The venv lives in a generic internal directory named "env".  Give every
+# shared-workstation shell an unambiguous prompt without changing that stable
+# filesystem layout.  The activation script still owns restoration on
+# `deactivate` through its saved _OLD_VIRTUAL_PS1 value.
+_isaac_ros2_previous_prompt="${VIRTUAL_ENV_PROMPT:-}"
+if [[ -z "${VIRTUAL_ENV_DISABLE_PROMPT:-}" && -n "${_isaac_ros2_previous_prompt}" ]]; then
+    PS1="(isaac_ros2) ${PS1#\("${_isaac_ros2_previous_prompt}"\) }"
+    export PS1
+fi
+export VIRTUAL_ENV_PROMPT=isaac_ros2
+unset _isaac_ros2_previous_prompt
+
 if [[ "${_isaac_ros2_nounset}" == true ]]; then
     set -u
 fi
@@ -268,7 +280,7 @@ install_candidate() {
     uv="${bootstrap}/bin/uv"
 
     log "creating Python 3.12 environment"
-    "${uv}" venv --python /usr/bin/python3.12 --seed "${env_root}"
+    "${uv}" venv --python /usr/bin/python3.12 --seed --prompt "${GROUP_NAME}" "${env_root}"
 
     log "installing Isaac Sim ${ISAAC_SIM_VERSION}"
     "${uv}" pip install --python "${env_root}/bin/python" "isaacsim[all,extscache]==${ISAAC_SIM_VERSION}" --extra-index-url https://pypi.nvidia.com --index-strategy unsafe-best-match --prerelease=allow

@@ -67,13 +67,12 @@ and [sensor composition tutorial](https://isaac-sim.github.io/IsaacLab/main/sour
 
 ## Common Environment
 
+Use a fresh terminal. If Conda is active, deactivate it before sourcing the
+shared runtime.
+
 ```bash
-cd ~/ros2_jazzy_ws
-source /opt/ros/jazzy/setup.bash
-source ~/ros2_jazzy_ws/install/setup.bash
-source ~/miniconda3/etc/profile.d/conda.sh
-conda activate env_isaaclab_ros2
-cd ~/IsaacLab
+cd ~/IsaacLab/ur3e_vla
+source /opt/isaac_ros2/setup.bash
 ```
 
 ## Workstation Baseline
@@ -86,29 +85,29 @@ smoke-test workflow.
 Ubuntu             24.04.4 LTS (kernel 7.0.0-28-generic)
 GPU                NVIDIA GeForce RTX 5090, 32607 MiB
 NVIDIA driver      595.84
-Python             3.12.13
-Isaac Sim          6.0.0.0 (pip)
-Isaac Lab          0.54.3, editable source at ~/IsaacLab
-Isaac Lab commit   d94504bcf91cb7ab7ff956a2d48ecd1bca82797a
-PyTorch            2.7.0+cu128
+Python             3.12.3
+Isaac Sim          6.0.1.0 (pip)
+Isaac Lab          release/3.0.0-beta2 under /opt/isaac_ros2/current
+Isaac Lab commit   2e44ddb2e195
+PyTorch            2.10.0+cu128
 ROS                Jazzy (ros-base 0.11.0)
 MoveIt             2.12.4
 UR robot driver    3.7.0
 ```
 
-This is a project-validated compatibility setup rather than the default pairing
-documented by that Isaac Lab checkout, whose normal installation guide still
-targets Isaac Sim 5.1 and Python 3.11. `vla_sim/isaac_app.py` intentionally uses
-the Isaac Sim 6.0 full-kit experience and the Isaac 5.1 cloud asset root. Keep
-those compatibility settings until the full scene, camera, collision, data, and
-robot checks have passed on a replacement stack.
+This validated runtime is shared by the `isaac_ros2` workstation group through
+`/opt/isaac_ros2/setup.bash`; it does not replace the separate OpenVLA or RLDS
+Conda environments. `vla_sim/isaac_app.py` intentionally uses the Isaac Sim 6.0
+full-kit experience and the Isaac 5.1 cloud asset root. Keep those compatibility
+settings until the full scene, camera, collision, data, and robot checks have
+passed on a replacement stack.
 
 ## Canonical Commands
 
 Start the persistent scene and bridge on port 8100:
 
 ```bash
-./isaaclab.sh -p ./ur3e_vla/scripts/run_remote_pick_place.py \
+isaaclab scripts/run_remote_pick_place.py \
   --headless --enable_cameras --seed 42
 ```
 
@@ -116,7 +115,7 @@ Collect canonical red-mug H5 demonstrations at 5 Hz. Use a new directory;
 `--overwrite` is required when reusing it.
 
 ```bash
-./isaaclab.sh -p ./ur3e_vla/scripts/collect_demos.py \
+isaaclab scripts/collect_demos.py \
   --headless --enable_cameras \
   --target red_mug \
   --episodes 500 --max-episodes-tried 700 \
@@ -127,7 +126,7 @@ Collect canonical red-mug H5 demonstrations at 5 Hz. Use a new directory;
 Run VLA against the canonical scene. `camera_policy` is the only policy camera.
 
 ```bash
-./isaaclab.sh -p ./ur3e_vla/scripts/run_vla.py \
+isaaclab scripts/run_vla.py \
   --headless --enable_cameras \
   --target red_mug \
   --instruction "pick up the red mug" \
@@ -141,7 +140,7 @@ never publishes robot motion, holds its last pose after a stale timeout, and
 keeps the YOLO bridge stream available on port 8100.
 
 ```bash
-./isaaclab.sh -p ./ur3e_vla/scripts/sync_sim_real.py \
+isaaclab scripts/sync_sim_real.py \
   --headless --enable_cameras \
   --joint-states-topic /joint_states \
   --joint-state-timeout 0.5

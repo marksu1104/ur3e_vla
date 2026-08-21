@@ -41,12 +41,8 @@ ss -ltnp | grep -E ':(8100|8000)\b' || true
 每一個要執行 Isaac 的遠端 terminal 都先執行：
 
 ```bash
-cd ~/ros2_jazzy_ws
-source /opt/ros/jazzy/setup.bash
-source ~/ros2_jazzy_ws/install/setup.bash
-source ~/miniconda3/etc/profile.d/conda.sh
-conda activate env_isaaclab_ros2
-cd ~/IsaacLab
+cd ~/IsaacLab/ur3e_vla
+source /opt/isaac_ros2/setup.bash
 ```
 
 ## 2. 純場景
@@ -54,7 +50,7 @@ cd ~/IsaacLab
 ### 2.1 Headless smoke test
 
 ```bash
-./isaaclab.sh -p ./ur3e_vla/scripts/run_scene.py \
+isaaclab scripts/run_scene.py \
   --headless --enable_cameras
 ```
 
@@ -75,8 +71,8 @@ echo "$DISPLAY"
 接著啟動 GUI：
 
 ```bash
-cd ~/IsaacLab
-./isaaclab.sh -p ./ur3e_vla/scripts/run_scene.py \
+cd ~/IsaacLab/ur3e_vla
+isaaclab scripts/run_scene.py \
   --enable_cameras
 ```
 
@@ -90,7 +86,7 @@ cd ~/IsaacLab
 只有要除錯目標點時才使用：
 
 ```bash
-./isaaclab.sh -p ./ur3e_vla/scripts/run_scene.py \
+isaaclab scripts/run_scene.py \
   --enable_cameras --show-markers
 ```
 
@@ -99,7 +95,7 @@ cd ~/IsaacLab
 ### 3.1 Terminal A：啟動 Isaac 與 bridge
 
 ```bash
-./isaaclab.sh -p ./ur3e_vla/scripts/run_remote_pick_place.py \
+isaaclab scripts/run_remote_pick_place.py \
   --headless --enable_cameras --seed 42
 ```
 
@@ -254,10 +250,10 @@ ss -ltnp | grep ':8100\b' || true
 ### 4.1 三物件 no-save smoke test
 
 ```bash
-cd ~/IsaacLab
+cd ~/IsaacLab/ur3e_vla
 
 for target in spoon red_mug bowl; do
-  ./isaaclab.sh -p ./ur3e_vla/scripts/collect_demos.py \
+  isaaclab scripts/collect_demos.py \
     --headless --enable_cameras \
     --target "$target" \
     --episodes 1 --max-episodes-tried 1 \
@@ -271,7 +267,7 @@ done
 ### 4.2 實際寫入小型 H5
 
 ```bash
-./isaaclab.sh -p ./ur3e_vla/scripts/collect_demos.py \
+isaaclab scripts/collect_demos.py \
   --headless --enable_cameras \
   --target red_mug \
   --episodes 3 --max-episodes-tried 5 \
@@ -320,9 +316,9 @@ PY
 ### 5.1 no-save smoke test
 
 ```bash
-cd ~/IsaacLab
+cd ~/IsaacLab/ur3e_vla
 
-./isaaclab.sh -p ./ur3e_vla/scripts/collect_demos_multi_env.py \
+isaaclab scripts/collect_demos_multi_env.py \
   --headless --enable_cameras \
   --target red_mug \
   --episodes 2 --num-envs 2 --max-episodes-tried 2 \
@@ -335,7 +331,7 @@ cd ~/IsaacLab
 ### 5.2 實際寫入 multi-env H5
 
 ```bash
-./isaaclab.sh -p ./ur3e_vla/scripts/collect_demos_multi_env.py \
+isaaclab scripts/collect_demos_multi_env.py \
   --headless --enable_cameras \
   --target red_mug \
   --episodes 2 --num-envs 2 --max-episodes-tried 2 \
@@ -375,7 +371,7 @@ PY
 ### 5.3 Multi-env 預覽影片
 
 ```bash
-./isaaclab.sh -p ./ur3e_vla/scripts/collect_demos_multi_env.py \
+isaaclab scripts/collect_demos_multi_env.py \
   --headless --enable_cameras \
   --target red_mug \
   --episodes 1 --num-envs 2 --max-episodes-tried 2 \
@@ -398,9 +394,9 @@ ls -lh ~/IsaacLab/ur3e_vla/outputs/test/full_test/multi_video.mp4
 不要在 smoke test 中覆蓋正式 asset，改寫入 `outputs/test/`：
 
 ```bash
-cd ~/IsaacLab
+cd ~/IsaacLab/ur3e_vla
 
-./isaaclab.sh -p ./ur3e_vla/scripts/tools/export_robot_asset.py \
+isaaclab scripts/tools/export_robot_asset.py \
   --headless \
   --output ~/IsaacLab/ur3e_vla/outputs/test/full_test/assets/assembled_robot.usda \
   --overwrite
@@ -413,7 +409,7 @@ ls -lh ~/IsaacLab/ur3e_vla/outputs/test/full_test/assets/assembled_robot.usda
 用剛輸出的 asset 啟動 multi-env：
 
 ```bash
-./isaaclab.sh -p ./ur3e_vla/scripts/collect_demos_multi_env.py \
+isaaclab scripts/collect_demos_multi_env.py \
   --headless --enable_cameras \
   --asset ~/IsaacLab/ur3e_vla/outputs/test/full_test/assets/assembled_robot.usda \
   --target red_mug \
@@ -425,7 +421,7 @@ ls -lh ~/IsaacLab/ur3e_vla/outputs/test/full_test/assets/assembled_robot.usda
 ### 6.2 碰撞資產產生器
 
 ```bash
-./isaaclab.sh -p ./ur3e_vla/scripts/tools/make_usd_collision_asset.py \
+isaaclab scripts/tools/make_usd_collision_asset.py \
   --headless \
   --source /Props/YCB/Axis_Aligned/025_mug.usd \
   --output ~/IsaacLab/ur3e_vla/outputs/test/full_test/assets/mug_collision.usda \
@@ -554,7 +550,7 @@ python3 scripts/tools/check_vla_prediction.py \
 先執行「Isaac Lab 共用環境」，再執行：
 
 ```bash
-./isaaclab.sh -p ./ur3e_vla/scripts/run_vla.py \
+isaaclab scripts/run_vla.py \
   --headless --enable_cameras \
   --target red_mug \
   --instruction "pick up the red mug" \
@@ -576,7 +572,7 @@ shape 錯誤。測完先停止 Isaac，再停止 VLA server。
 Terminal A 先執行「Isaac Lab 共用環境」：
 
 ```bash
-./isaaclab.sh -p ./ur3e_vla/scripts/sync_sim_real.py \
+isaaclab scripts/sync_sim_real.py \
   --headless --enable_cameras \
   --joint-states-topic /joint_states \
   --joint-state-timeout 0.5
@@ -585,9 +581,8 @@ Terminal A 先執行「Isaac Lab 共用環境」：
 Terminal B 先載入 ROS：
 
 ```bash
-cd ~/ros2_jazzy_ws
-source /opt/ros/jazzy/setup.bash
-source ~/ros2_jazzy_ws/install/setup.bash
+cd ~/IsaacLab/ur3e_vla
+source /opt/isaac_ros2/setup.bash
 ```
 
 故意使用亂序 joint names，持續發布：
@@ -652,7 +647,7 @@ ros2 topic echo /joint_states --once
 再執行：
 
 ```bash
-./isaaclab.sh -p ./ur3e_vla/scripts/sync_sim_real.py \
+isaaclab scripts/sync_sim_real.py \
   --headless --enable_cameras \
   --joint-states-topic /joint_states \
   --joint-state-timeout 0.5
@@ -675,12 +670,8 @@ ros2 topic echo /joint_states --once
 - 不加入 `--enable-motion`。
 
 ```bash
-cd ~/ros2_jazzy_ws
-source /opt/ros/jazzy/setup.bash
-source ~/ros2_jazzy_ws/install/setup.bash
-source ~/miniconda3/etc/profile.d/conda.sh
-conda activate env_isaaclab_ros2
 cd ~/IsaacLab/ur3e_vla
+source /opt/isaac_ros2/setup.bash
 
 python3 scripts/real_vla_servo.py \
   --image-topic /image_raw \
@@ -707,7 +698,7 @@ python3 scripts/real_vla_servo.py \
 確認沒有程序或 port 留在背景：
 
 ```bash
-pgrep -af '[i]saac-sim|[r]un_remote_pick_place|[r]un_vla|[c]ollect_demos|[s]ync_real_to_sim|[v]la_server' || true
+pgrep -af '[i]saac-sim|[r]un_scene|[r]un_remote_pick_place|[r]un_vla|[c]ollect_demos|[s]ync_sim_real|[v]la_server' || true
 ss -ltnp | grep -E ':(8100|8000)\b' || true
 ```
 

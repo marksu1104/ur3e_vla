@@ -1,10 +1,11 @@
 """Create a local USD asset with collision generated from visual meshes.
 
 Run with Isaac Lab Python:
-    cd ~/IsaacLab
-    ./isaaclab.sh -p ./ur3e_vla/scripts/tools/make_usd_collision_asset.py \
+    cd ~/IsaacLab/ur3e_vla
+    source /opt/isaac_ros2/setup.bash
+    isaaclab scripts/tools/make_usd_collision_asset.py \
         --source /Props/YCB/Axis_Aligned/025_mug.usd \
-        --output ./ur3e_vla/assets/025_mug_collision.usda \
+        --output ./assets/025_mug_collision.usda \
         --approximation convexDecomposition \
         --mass 0.20
 """

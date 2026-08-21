@@ -29,9 +29,8 @@ For the current test:
 ## Terminal A: UR Driver
 
 ```bash
-cd ~/ros2_jazzy_ws
-source /opt/ros/jazzy/setup.bash
-source ~/ros2_jazzy_ws/install/setup.bash
+cd ~/IsaacLab/ur3e_vla
+source /opt/isaac_ros2/setup.bash
 
 ros2 launch ur_robot_driver ur3e.launch.py \
   robot_ip:=192.168.10.175 \
@@ -43,9 +42,8 @@ ros2 launch ur_robot_driver ur3e.launch.py \
 Mock hardware option:
 
 ```bash
-cd ~/ros2_jazzy_ws
-source /opt/ros/jazzy/setup.bash
-source ~/ros2_jazzy_ws/install/setup.bash
+cd ~/IsaacLab/ur3e_vla
+source /opt/isaac_ros2/setup.bash
 
 ros2 launch ur_robot_driver ur3e.launch.py \
   robot_ip:=yyy.yyy.yyy.yyy \
@@ -57,9 +55,8 @@ ros2 launch ur_robot_driver ur3e.launch.py \
 ## Terminal B: MoveIt Servo + Bridge
 
 ```bash
-cd ~/ros2_jazzy_ws
-source /opt/ros/jazzy/setup.bash
-source ~/ros2_jazzy_ws/install/setup.bash
+cd ~/IsaacLab/ur3e_vla
+source /opt/isaac_ros2/setup.bash
 
 ros2 launch vla_ros_bridge vla_bridge.launch.py
 ```
@@ -69,9 +66,8 @@ ros2 launch vla_ros_bridge vla_bridge.launch.py
 The current USB camera publishes 640x480 RGB images on `/image_raw`.
 
 ```bash
-cd ~/ros2_jazzy_ws
-source /opt/ros/jazzy/setup.bash
-source ~/ros2_jazzy_ws/install/setup.bash
+cd ~/IsaacLab/ur3e_vla
+source /opt/isaac_ros2/setup.bash
 
 ros2 run v4l2_camera v4l2_camera_node \
   --ros-args \
@@ -95,9 +91,8 @@ ros2 run rqt_image_view rqt_image_view
 ## Terminal D: Enforce Controller Path
 
 ```bash
-cd ~/ros2_jazzy_ws
-source /opt/ros/jazzy/setup.bash
-source ~/ros2_jazzy_ws/install/setup.bash
+cd ~/IsaacLab/ur3e_vla
+source /opt/isaac_ros2/setup.bash
 
 ros2 control switch_controllers \
   --activate forward_velocity_controller \
@@ -152,11 +147,8 @@ Start with a short, no-rotation reaching test. The gripper dimension is ignored.
 Red mug:
 
 ```bash
-cd ~/ros2_jazzy_ws
-source /opt/ros/jazzy/setup.bash
-source ~/ros2_jazzy_ws/install/setup.bash
-conda activate env_isaaclab_ros2
 cd ~/IsaacLab/ur3e_vla
+source /opt/isaac_ros2/setup.bash
 
 python scripts/real_vla_servo.py \
   --image-topic /image_raw \
@@ -231,4 +223,3 @@ Before longer or more autonomous tests, add:
 - logging to CSV,
 - fixed camera placement matching Isaac `camera_main`,
 - optional small real-image fine-tuning data.
-

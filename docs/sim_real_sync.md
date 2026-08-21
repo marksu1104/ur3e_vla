@@ -27,11 +27,8 @@ below are specific to this workstation; do not add them globally to shell
 startup files.
 
 ```bash
-cd ~/ros2_jazzy_ws
-source /opt/ros/jazzy/setup.bash
-source ~/ros2_jazzy_ws/install/setup.bash
-source ~/miniconda3/etc/profile.d/conda.sh
-conda activate env_isaaclab_ros2
+cd ~/IsaacLab/ur3e_vla
+source /opt/isaac_ros2/setup.bash
 export ROS_DOMAIN_ID=73
 export ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST
 ```
@@ -42,9 +39,8 @@ domain variables in every ROS and Isaac terminal.
 ## Terminal A: UR Driver
 
 ```bash
-cd ~/ros2_jazzy_ws
-source /opt/ros/jazzy/setup.bash
-source ~/ros2_jazzy_ws/install/setup.bash
+cd ~/IsaacLab/ur3e_vla
+source /opt/isaac_ros2/setup.bash
 export ROS_DOMAIN_ID=73
 export ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST
 
@@ -65,9 +61,8 @@ topic are sufficient. Sim-to-real motion also requires Terminals B and C.
 ## Terminal B: MoveIt Servo
 
 ```bash
-cd ~/ros2_jazzy_ws
-source /opt/ros/jazzy/setup.bash
-source ~/ros2_jazzy_ws/install/setup.bash
+cd ~/IsaacLab/ur3e_vla
+source /opt/isaac_ros2/setup.bash
 export ROS_DOMAIN_ID=73
 export ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST
 
@@ -79,9 +74,8 @@ Keep this terminal running while sim-to-real is active.
 ## Terminal C: Controller and ROS Checks
 
 ```bash
-cd ~/ros2_jazzy_ws
-source /opt/ros/jazzy/setup.bash
-source ~/ros2_jazzy_ws/install/setup.bash
+cd ~/IsaacLab/ur3e_vla
+source /opt/isaac_ros2/setup.bash
 export ROS_DOMAIN_ID=73
 export ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST
 
@@ -115,9 +109,12 @@ This mode subscribes to the real six-axis joint state and never publishes
 robot motion:
 
 ```bash
-cd ~/IsaacLab
+cd ~/IsaacLab/ur3e_vla
+source /opt/isaac_ros2/setup.bash
+export ROS_DOMAIN_ID=73
+export ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST
 
-./isaaclab.sh -p ./ur3e_vla/scripts/sync_sim_real.py \
+isaaclab scripts/sync_sim_real.py \
   --headless --enable_cameras \
   --direction real-to-sim \
   --joint-states-topic /joint_states \
@@ -129,16 +126,12 @@ cd ~/IsaacLab
 Start without `--enable-motion` first:
 
 ```bash
-cd ~/ros2_jazzy_ws
-source /opt/ros/jazzy/setup.bash
-source ~/ros2_jazzy_ws/install/setup.bash
-source ~/miniconda3/etc/profile.d/conda.sh
-conda activate env_isaaclab_ros2
+cd ~/IsaacLab/ur3e_vla
+source /opt/isaac_ros2/setup.bash
 export ROS_DOMAIN_ID=73
 export ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST
-cd ~/IsaacLab
 
-./isaaclab.sh -p ./ur3e_vla/scripts/sync_sim_real.py \
+isaaclab scripts/sync_sim_real.py \
   --headless --enable_cameras \
   --direction sim-to-real \
   --joint-states-topic /joint_states \
@@ -162,7 +155,7 @@ Send the supported task:
 
 ```bash
 cd ~/IsaacLab/ur3e_vla
-conda activate env_isaaclab_ros2
+source /opt/isaac_ros2/setup.bash
 
 python3 scripts/tools/test_bridge_client.py \
   --server http://127.0.0.1:8100 \
@@ -176,16 +169,12 @@ Only after the dry run and physical safety checks pass, restart with the same
 parameters plus `--enable-motion`:
 
 ```bash
-cd ~/ros2_jazzy_ws
-source /opt/ros/jazzy/setup.bash
-source ~/ros2_jazzy_ws/install/setup.bash
-source ~/miniconda3/etc/profile.d/conda.sh
-conda activate env_isaaclab_ros2
+cd ~/IsaacLab/ur3e_vla
+source /opt/isaac_ros2/setup.bash
 export ROS_DOMAIN_ID=73
 export ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST
-cd ~/IsaacLab
 
-./isaaclab.sh -p ./ur3e_vla/scripts/sync_sim_real.py \
+isaaclab scripts/sync_sim_real.py \
   --enable_cameras \
   --direction sim-to-real \
   --joint-states-topic /joint_states \
@@ -202,7 +191,7 @@ Send only:
 
 ```bash
 cd ~/IsaacLab/ur3e_vla
-conda activate env_isaaclab_ros2
+source /opt/isaac_ros2/setup.bash
 
 python3 scripts/tools/test_bridge_client.py \
   --server http://127.0.0.1:8100 \

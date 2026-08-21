@@ -1,20 +1,17 @@
 # Command Reference
 
-Run Isaac commands after loading the ROS and Isaac Lab environment:
+Run Isaac commands from a fresh terminal after loading the shared ROS and Isaac
+Lab environment. Deactivate Conda first if it is already active:
 
 ```bash
-cd ~/ros2_jazzy_ws
-source /opt/ros/jazzy/setup.bash
-source ~/ros2_jazzy_ws/install/setup.bash
-source ~/miniconda3/etc/profile.d/conda.sh
-conda activate env_isaaclab_ros2
-cd ~/IsaacLab
+cd ~/IsaacLab/ur3e_vla
+source /opt/isaac_ros2/setup.bash
 ```
 
 ## Remote Bridge
 
 ```bash
-./isaaclab.sh -p ./ur3e_vla/scripts/run_remote_pick_place.py \
+isaaclab scripts/run_remote_pick_place.py \
   --headless --enable_cameras --seed 42
 ```
 
@@ -41,7 +38,7 @@ binary gripper action. It must use a new H5 location, because it cannot mix
 with legacy mug H5 data.
 
 ```bash
-./isaaclab.sh -p ./ur3e_vla/scripts/collect_demos.py \
+isaaclab scripts/collect_demos.py \
   --headless --enable_cameras \
   --target red_mug \
   --episodes 500 --max-episodes-tried 700 \
@@ -52,7 +49,7 @@ with legacy mug H5 data.
 One no-save trajectory smoke test:
 
 ```bash
-./isaaclab.sh -p ./ur3e_vla/scripts/collect_demos.py \
+isaaclab scripts/collect_demos.py \
   --headless --enable_cameras \
   --target red_mug --episodes 1 --max-episodes-tried 1 \
   --output-dir ~/IsaacLab/ur3e_vla/outputs/test/collection_smoke \
@@ -65,7 +62,7 @@ Start the server in the OpenVLA environment, then run the policy with the
 canonical policy camera:
 
 ```bash
-./isaaclab.sh -p ./ur3e_vla/scripts/run_vla.py \
+isaaclab scripts/run_vla.py \
   --headless --enable_cameras \
   --target red_mug \
   --instruction "pick up the red mug" \
@@ -80,7 +77,7 @@ This command consumes `/joint_states` by joint name and never publishes Servo,
 trajectory, or other real-robot motion commands:
 
 ```bash
-./isaaclab.sh -p ./ur3e_vla/scripts/sync_sim_real.py \
+isaaclab scripts/sync_sim_real.py \
   --headless --enable_cameras \
   --joint-states-topic /joint_states \
   --joint-state-timeout 0.5
