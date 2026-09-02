@@ -238,13 +238,19 @@ class RobotController:
         never call ``apply_physics_targets``, so without this the virtual
         gripper's target is set once and then not maintained.
         """
+        self._write_finger_target()
+
+    def _write_finger_target(self) -> None:
+        """Write the current physical finger target to the Robotiq drive joint."""
         finger_target = torch.full(
             (1, 1),
             self._physical_gripper_command,
             dtype=torch.float32,
             device=self.device,
         )
-        self.robot.set_joint_position_target_index(target=finger_target, joint_ids=self.finger_ids_t)
+        self.robot.set_joint_position_target_index(
+            target=finger_target, joint_ids=self.finger_ids_t
+        )
 
     def write_commanded_gripper_state(self, logical: float, dt: float | None = None) -> None:
         """Track a commanded 0..1 gripper state on the virtual robot.
@@ -286,13 +292,7 @@ class RobotController:
             as_torch(self.robot.data.joint_pos)[:, self.arm_ids],
         )
         self.robot.set_joint_position_target_index(target=q_target, joint_ids=self.arm_ids_t)
-        finger_target = torch.full(
-            (1, 1),
-            self._physical_gripper_command,
-            dtype=torch.float32,
-            device=self.device,
-        )
-        self.robot.set_joint_position_target_index(target=finger_target, joint_ids=self.finger_ids_t)
+        self._write_finger_target()
 
 
 class SimulationRuntime:
