@@ -108,6 +108,9 @@ np.random.seed(_extra_args.seed)
 
 ASSEMBLED_PRIM = "{ENV_REGEX_NS}/Assembled"
 ROBOT_PRIM = f"{ASSEMBLED_PRIM}/Robot"
+SETTLE_STEPS = 60
+RECORD_EVERY_N_STEPS = 12
+MAX_STEPS = 1800
 
 
 def _asset_path() -> str:
@@ -197,7 +200,7 @@ def _setup_batch(scene, sim, robot, sim_dt, target_name, target_info, arm_ids_t,
             tuple(object_info["spawn_pos"]), tuple(object_info["spawn_rot"])
         )
 
-    for _ in range(60):
+    for _ in range(SETTLE_STEPS):
         robot.set_joint_position_target_index(target=home_q, joint_ids=arm_ids_t)
         robot.set_joint_position_target_index(target=open_cmd, joint_ids=finger_ids_t)
         scene.write_data_to_sim()
@@ -263,8 +266,8 @@ def _run_batch(sim, scene, robot, ik, sim_dt, arm_ids_t, finger_ids_t, ee_body_i
 
     t_sim = 0.0
     step = 0
-    record_every = 12
-    max_steps = 1800
+    record_every = RECORD_EVERY_N_STEPS
+    max_steps = MAX_STEPS
 
     while step < max_steps:
         samples = [player.sample(t_sim) for player in players]
