@@ -421,7 +421,7 @@ class SimToRealTrial:
         trajectory = build_pick_place_trajectory(
             TARGETS[name],
             target.data.root_pos_w[0].cpu().numpy(),
-            pose_wxyz_from_sim(target.data.root_state_w)[0, 3:7].cpu().numpy(),
+            pose_wxyz_from_sim(target.data.root_link_pose_w)[0, 3:7].cpu().numpy(),
             PLACE_POSITIONS[command["position_index"]],
             grasp_z_offset=self.options.grasp_z_offset,
             place_z_offset=self.options.place_z_offset,
@@ -500,7 +500,7 @@ class SimToRealTrial:
             self._drive(follow, pos, quat, yaw_error, angular, now, step_index)
 
     def _ee_pose(self) -> tuple[np.ndarray, np.ndarray]:
-        pose = pose_wxyz_from_sim(self.controller.robot.data.body_state_w)[
+        pose = pose_wxyz_from_sim(self.controller.robot.data.body_link_pose_w)[
             0, self.controller.ee_body_idx, :7
         ].cpu().numpy()
         return pose[:3], pose[3:7]

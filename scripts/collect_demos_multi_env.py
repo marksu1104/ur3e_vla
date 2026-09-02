@@ -171,14 +171,15 @@ def _setup_batch(scene, sim, robot, sim_dt, target_name, target_info, arm_ids_t,
     root_pose[:, 3:] = torch.tensor(
         quat_wxyz_to_isaac(ROBOT_BASE_ROT), device=device
     ).unsqueeze(0)
-    robot.write_root_pose_to_sim(root_pose)
-    robot.write_root_velocity_to_sim(torch.zeros((num_envs, 6), device=device))
+    robot.write_root_pose_to_sim_index(root_pose=root_pose)
+    robot.write_root_velocity_to_sim_index(root_velocity=torch.zeros((num_envs, 6), device=device))
 
     home_q = torch.tensor(HOME_Q, device=device).unsqueeze(0).repeat(num_envs, 1)
     open_cmd = torch.full((num_envs, 1), GRIPPER_OPEN, device=device)
-    robot.write_joint_state_to_sim(home_q, torch.zeros_like(home_q), joint_ids=arm_ids_t)
-    robot.set_joint_position_target(home_q, joint_ids=arm_ids_t)
-    robot.set_joint_position_target(open_cmd, joint_ids=finger_ids_t)
+    robot.write_joint_position_to_sim_index(position=home_q, joint_ids=arm_ids_t)
+    robot.write_joint_velocity_to_sim_index(velocity=torch.zeros_like(home_q), joint_ids=arm_ids_t)
+    robot.set_joint_position_target_index(target=home_q, joint_ids=arm_ids_t)
+    robot.set_joint_position_target_index(target=open_cmd, joint_ids=finger_ids_t)
 
     scene_poses = {}
     for object_name, object_info in TARGETS.items():
@@ -188,17 +189,17 @@ def _setup_batch(scene, sim, robot, sim_dt, target_name, target_info, arm_ids_t,
         pose[:, 3:] = torch.tensor(
             quat_wxyz_to_isaac(object_info["spawn_rot"]), device=device
         ).unsqueeze(0)
-        scene[object_name].write_root_pose_to_sim(pose)
-        scene[object_name].write_root_velocity_to_sim(
-            torch.zeros((num_envs, 6), device=device)
+        scene[object_name].write_root_pose_to_sim_index(root_pose=pose)
+        scene[object_name].write_root_velocity_to_sim_index(
+            root_velocity=torch.zeros((num_envs, 6), device=device)
         )
         scene_poses[object_name] = (
             tuple(object_info["spawn_pos"]), tuple(object_info["spawn_rot"])
         )
 
     for _ in range(60):
-        robot.set_joint_position_target(home_q, joint_ids=arm_ids_t)
-        robot.set_joint_position_target(open_cmd, joint_ids=finger_ids_t)
+        robot.set_joint_position_target_index(target=home_q, joint_ids=arm_ids_t)
+        robot.set_joint_position_target_index(target=open_cmd, joint_ids=finger_ids_t)
         scene.write_data_to_sim()
         sim.step()
         scene.update(sim_dt)
@@ -206,7 +207,7 @@ def _setup_batch(scene, sim, robot, sim_dt, target_name, target_info, arm_ids_t,
     target_obj = scene[target_name]
     target_resting = as_torch(target_obj.data.root_pos_w).detach().cpu().numpy()
     target_rotations = (
-        pose_wxyz_from_sim(target_obj.data.root_state_w)[..., 3:7]
+        pose_wxyz_from_sim(target_obj.data.root_link_pose_w)[..., 3:7]
         .detach()
         .cpu()
         .numpy()
@@ -278,18 +279,18 @@ def _run_batch(sim, scene, robot, ik, sim_dt, arm_ids_t, finger_ids_t, ee_body_i
         if np.all(finished_at >= 0) and np.all(step - finished_at > 60):
             break
 
-        root_pos = as_torch(robot.data.root_state_w)[:, :3]
+        root_pos = as_torch(robot.data.root_link_pose_w)[:, :3]
         ik.set_command(torch.cat([tgt_pos_w - root_pos, tgt_quat_w], dim=-1))
 
-        ee_pose_w = as_torch(robot.data.body_state_w)[:, ee_body_idx, :7]
+        ee_pose_w = as_torch(robot.data.body_link_pose_w)[:, ee_body_idx, :7]
         ee_pos_b = ee_pose_w[:, :3] - root_pos
         ee_quat_b = ee_pose_w[:, 3:]
         q_current = as_torch(robot.data.joint_pos)[:, arm_ids_t.tolist()]
-        jac = as_torch(robot.root_physx_view.get_jacobians())[
+        jac = as_torch(robot.root_view.get_jacobians())[
             :, ee_jac_idx, :, :
         ][:, :, arm_ids_t.tolist()]
         q_target = ik.compute(ee_pos_b, ee_quat_b, jac, q_current)
-        robot.set_joint_position_target(q_target, joint_ids=arm_ids_t)
+        robot.set_joint_position_target_index(target=q_target, joint_ids=arm_ids_t)
 
         physical_target = grip_target * GRIPPER_CLOSE
         step_limit = GRIPPER_SPEED_RAD_S * sim_dt
@@ -297,7 +298,7 @@ def _run_batch(sim, scene, robot, ik, sim_dt, arm_ids_t, finger_ids_t, ee_body_i
         finger_cmd = torch.tensor(
             last_grip, dtype=torch.float32, device=device
         ).unsqueeze(1)
-        robot.set_joint_position_target(finger_cmd, joint_ids=finger_ids_t)
+        robot.set_joint_position_target_index(target=finger_cmd, joint_ids=finger_ids_t)
 
         scene.write_data_to_sim()
         sim.step()
@@ -319,7 +320,7 @@ def _run_batch(sim, scene, robot, ik, sim_dt, arm_ids_t, finger_ids_t, ee_body_i
 
         if step % record_every == 0:
             ee_pose_now_all = (
-                pose_wxyz_from_sim(robot.data.body_state_w)[:, ee_body_idx]
+                pose_wxyz_from_sim(robot.data.body_link_pose_w)[:, ee_body_idx]
                 .detach()
                 .cpu()
                 .numpy()
@@ -366,7 +367,7 @@ def _run_batch(sim, scene, robot, ik, sim_dt, arm_ids_t, finger_ids_t, ee_body_i
         step += 1
 
     results = []
-    ee_pos_final_all = as_torch(robot.data.body_state_w)[:, ee_body_idx, :3].detach().cpu().numpy()
+    ee_pos_final_all = as_torch(robot.data.body_link_pose_w)[:, ee_body_idx, :3].detach().cpu().numpy()
     obj_pos_final_all = as_torch(target_obj.data.root_pos_w).detach().cpu().numpy()
     joint_final_all = as_torch(robot.data.joint_pos)[:, finger_ids_t.tolist()].detach().cpu().numpy()
     for env_id in range(num_envs):

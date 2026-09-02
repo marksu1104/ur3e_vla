@@ -69,7 +69,7 @@ def run_one_episode(
 
     target = scene[target_name]
     target_resting = as_torch(target.data.root_pos_w)[0].cpu().numpy()
-    target_rot = pose_wxyz_from_sim(target.data.root_state_w)[0, 3:7].cpu().numpy()
+    target_rot = pose_wxyz_from_sim(target.data.root_link_pose_w)[0, 3:7].cpu().numpy()
     target_initial_z = float(target_resting[2])
     trajectory = build_pick_place_trajectory(
         TARGETS[target_name], target_resting, target_rot, place_xy
@@ -102,7 +102,7 @@ def run_one_episode(
 
         if step % RECORD_EVERY_N_STEPS == 0:
             ee_pose = (
-                pose_wxyz_from_sim(runtime.robot.data.body_state_w)[
+                pose_wxyz_from_sim(runtime.robot.data.body_link_pose_w)[
                     0, controller.ee_body_idx
                 ]
                 .cpu()

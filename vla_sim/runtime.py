@@ -164,7 +164,7 @@ class RobotController:
     @property
     def ee_position(self) -> np.ndarray:
         return (
-            as_torch(self.robot.data.body_state_w)[0, self.ee_body_idx, :3].cpu().numpy()
+            as_torch(self.robot.data.body_link_pose_w)[0, self.ee_body_idx, :3].cpu().numpy()
         )
 
     def reset_home(self) -> None:
@@ -174,12 +174,11 @@ class RobotController:
             device=self.device,
             dtype=torch.float32,
         )
-        self.robot.write_root_pose_to_sim(root_pose)
-        self.robot.write_root_velocity_to_sim(torch.zeros((1, 6), device=self.device))
-        self.robot.write_joint_state_to_sim(
-            self.home_q,
-            torch.zeros_like(self.home_q),
-            joint_ids=self.arm_ids_t,
+        self.robot.write_root_pose_to_sim_index(root_pose=root_pose)
+        self.robot.write_root_velocity_to_sim_index(root_velocity=torch.zeros((1, 6), device=self.device))
+        self.robot.write_joint_position_to_sim_index(position=self.home_q, joint_ids=self.arm_ids_t)
+        self.robot.write_joint_velocity_to_sim_index(
+            velocity=torch.zeros_like(self.home_q), joint_ids=self.arm_ids_t
         )
         self.set_pose_target(HOME_POS, EE_ORIENT_DOWN)
         self.set_gripper_command(0.0, rate_limit=False)
@@ -226,12 +225,11 @@ class RobotController:
         if values.numel() != len(ARM_JOINT_NAMES):
             raise ValueError("expected exactly six measured UR3e arm joint values")
         values = values.reshape(1, len(ARM_JOINT_NAMES))
-        self.robot.write_joint_state_to_sim(
-            values,
-            torch.zeros_like(values),
-            joint_ids=self.arm_ids_t,
+        self.robot.write_joint_position_to_sim_index(position=values, joint_ids=self.arm_ids_t)
+        self.robot.write_joint_velocity_to_sim_index(
+            velocity=torch.zeros_like(values), joint_ids=self.arm_ids_t
         )
-        self.robot.set_joint_position_target(values, joint_ids=self.arm_ids_t)
+        self.robot.set_joint_position_target_index(target=values, joint_ids=self.arm_ids_t)
 
     def apply_gripper_target(self) -> None:
         """Re-assert only the finger target, leaving the arm alone.
@@ -246,7 +244,7 @@ class RobotController:
             dtype=torch.float32,
             device=self.device,
         )
-        self.robot.set_joint_position_target(finger_target, joint_ids=self.finger_ids_t)
+        self.robot.set_joint_position_target_index(target=finger_target, joint_ids=self.finger_ids_t)
 
     def write_commanded_gripper_state(self, logical: float, dt: float | None = None) -> None:
         """Track a commanded 0..1 gripper state on the virtual robot.
@@ -270,7 +268,7 @@ class RobotController:
     def apply_physics_targets(self) -> None:
         """Apply IK arm targets and the single official Robotiq drive joint."""
         root_pos = as_torch(self.robot.data.root_link_pose_w)[:, :3]
-        ee_pose_w = as_torch(self.robot.data.body_state_w)[:, self.ee_body_idx, :7]
+        ee_pose_w = as_torch(self.robot.data.body_link_pose_w)[:, self.ee_body_idx, :7]
         ee_pos_b = ee_pose_w[:, :3] - root_pos
         ee_quat_b = ee_pose_w[:, 3:]
         self.ik.set_command(
@@ -279,7 +277,7 @@ class RobotController:
                 dim=-1,
             )
         )
-        jac_full = as_torch(self.robot.root_physx_view.get_jacobians())
+        jac_full = as_torch(self.robot.root_view.get_jacobians())
         jac = jac_full[:, self.ee_jac_idx, :, :][:, :, self.arm_ids]
         q_target = self.ik.compute(
             ee_pos_b,
@@ -287,14 +285,14 @@ class RobotController:
             jac,
             as_torch(self.robot.data.joint_pos)[:, self.arm_ids],
         )
-        self.robot.set_joint_position_target(q_target, joint_ids=self.arm_ids_t)
+        self.robot.set_joint_position_target_index(target=q_target, joint_ids=self.arm_ids_t)
         finger_target = torch.full(
             (1, 1),
             self._physical_gripper_command,
             dtype=torch.float32,
             device=self.device,
         )
-        self.robot.set_joint_position_target(finger_target, joint_ids=self.finger_ids_t)
+        self.robot.set_joint_position_target_index(target=finger_target, joint_ids=self.finger_ids_t)
 
 
 class SimulationRuntime:
@@ -436,10 +434,10 @@ class SimulationRuntime:
             pos = TARGETS[name]["spawn_pos"]
             rot = TARGETS[name]["spawn_rot"]
             obj = self.scene[name]
-            obj.write_root_pose_to_sim(
-                torch.tensor([[*pos, *quat_wxyz_to_isaac(rot)]], device=self.device)
+            obj.write_root_pose_to_sim_index(
+                root_pose=torch.tensor([[*pos, *quat_wxyz_to_isaac(rot)]], device=self.device)
             )
-            obj.write_root_velocity_to_sim(torch.zeros((1, 6), device=self.device))
+            obj.write_root_velocity_to_sim_index(root_velocity=torch.zeros((1, 6), device=self.device))
 
     def step(self) -> None:
         """Apply the authoritative state and advance exactly one sim frame."""

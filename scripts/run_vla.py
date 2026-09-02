@@ -68,7 +68,7 @@ def main() -> None:
         runtime.step()
 
     robot = runtime.robot
-    ee_pose = pose_wxyz_from_sim(robot.data.body_state_w)[0, controller.ee_body_idx]
+    ee_pose = pose_wxyz_from_sim(robot.data.body_link_pose_w)[0, controller.ee_body_idx]
     ee_target_pos = ee_pose[:3].clone()
     ee_target_quat = ee_pose[3:].clone()
     gripper_command = 0.0
