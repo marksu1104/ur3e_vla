@@ -21,6 +21,9 @@ readonly ISAAC_SIM_VERSION="6.0.1.0"
 readonly ISAAC_LAB_BRANCH="release/3.0.0-beta2"
 readonly TORCH_VERSION="2.10.0"
 readonly TORCHVISION_VERSION="0.25.0"
+readonly FASTAPI_VERSION="0.120.4"
+readonly UVICORN_VERSION="0.29.0"
+readonly WEBSOCKETS_VERSION="12.0"
 readonly RELEASE_ID="isaacsim-6.0.1.0_isaaclab-3.0.0-beta2"
 readonly SHARED_ROOT="/opt/isaac_ros2"
 readonly RELEASE_ROOT="${SHARED_ROOT}/releases/${RELEASE_ID}"
@@ -208,9 +211,11 @@ export ISAAC_ROS2_KIT_DATA_DIR="${ISAAC_ROS2_PORTABLE_ROOT}/data"
 export ISAAC_ROS2_KIT_CACHE_DIR="${ISAAC_ROS2_PORTABLE_ROOT}/cache"
 export ISAAC_ROS2_KIT_LOG_DIR="${ISAAC_ROS2_PORTABLE_ROOT}/logs"
 export ISAAC_ROS2_KIT_CRASH_DIR="${ISAAC_ROS2_PORTABLE_ROOT}/crash"
+export ISAAC_ROS2_SHADER_CACHE_DIR="${ISAAC_ROS2_KIT_CACHE_DIR}/shadercache"
+export ISAAC_ROS2_DRIVER_SHADER_CACHE_DIR="${ISAAC_ROS2_KIT_CACHE_DIR}/nv_shadercache"
 export WARP_CACHE_PATH="${XDG_CACHE_HOME}/isaac_ros2/isaacsim-6.0.1.0_isaaclab-3.0.0-beta2/warp"
 export PYTHONPYCACHEPREFIX="${XDG_CACHE_HOME}/isaac_ros2/isaacsim-6.0.1.0_isaaclab-3.0.0-beta2/pycache"
-mkdir -p "${ISAAC_ROS2_KIT_DATA_DIR}/exts" "${ISAAC_ROS2_KIT_CACHE_DIR}/DerivedDataCache" "${ISAAC_ROS2_KIT_LOG_DIR}" "${ISAAC_ROS2_KIT_CRASH_DIR}" "${WARP_CACHE_PATH}" "${PYTHONPYCACHEPREFIX}"
+mkdir -p "${ISAAC_ROS2_KIT_DATA_DIR}/exts" "${ISAAC_ROS2_KIT_CACHE_DIR}/DerivedDataCache" "${ISAAC_ROS2_SHADER_CACHE_DIR}" "${ISAAC_ROS2_DRIVER_SHADER_CACHE_DIR}" "${ISAAC_ROS2_KIT_LOG_DIR}" "${ISAAC_ROS2_KIT_CRASH_DIR}" "${WARP_CACHE_PATH}" "${PYTHONPYCACHEPREFIX}"
 
 source /opt/ros/jazzy/setup.bash
 if [[ -f "${ISAAC_ROS2_RELEASE}/ros2_ws/install/setup.bash" ]]; then
@@ -241,7 +246,7 @@ isaaclab() {
         echo "usage: isaaclab SCRIPT.py [arguments...]" >&2
         return 2
     fi
-    "${ISAACLAB_ROOT}/isaaclab.sh" -p "$@" --kit_args "--portable --portable-root=${ISAAC_ROS2_PORTABLE_ROOT} --/app/userConfigPath=${ISAAC_ROS2_KIT_DATA_DIR}/user.config.json --/app/extensions/registryCache=${ISAAC_ROS2_KIT_DATA_DIR}/exts --/UJITSO/datastore/localCachePath=${ISAAC_ROS2_KIT_CACHE_DIR}/DerivedDataCache --/log/file=${ISAAC_ROS2_KIT_LOG_DIR}/kit.log --/crashreporter/dumpDir=${ISAAC_ROS2_KIT_CRASH_DIR}"
+    "${ISAACLAB_ROOT}/isaaclab.sh" -p "$@" --kit_args "--portable --portable-root=${ISAAC_ROS2_PORTABLE_ROOT} --/app/userConfigPath=${ISAAC_ROS2_KIT_DATA_DIR}/user.config.json --/app/extensions/registryCache=${ISAAC_ROS2_KIT_DATA_DIR}/exts --/UJITSO/datastore/localCachePath=${ISAAC_ROS2_KIT_CACHE_DIR}/DerivedDataCache --/rtx/shaderDb/shaderCachePath=${ISAAC_ROS2_SHADER_CACHE_DIR} --/rtx/shaderDb/driverShaderCachePath=${ISAAC_ROS2_DRIVER_SHADER_CACHE_DIR} --/log/file=${ISAAC_ROS2_KIT_LOG_DIR}/kit.log --/crashreporter/dumpDir=${ISAAC_ROS2_KIT_CRASH_DIR}"
 }
 SETUP
     } >"${setup_file}"
@@ -301,7 +306,15 @@ install_candidate() {
     )
 
     log "installing this project's non-GUI runtime dependencies"
-    "${uv}" pip install --python "${env_root}/bin/python" fastapi uvicorn websockets requests pillow h5py opencv-python-headless
+    # Keep the bridge stack aligned with isaacsim-kernel.  In particular,
+    # Uvicorn 0.29 uses the legacy websockets protocol that Isaac Sim pins to
+    # 12.0; installing an unconstrained newer release can break Ping/Pong while
+    # a stream is connected.
+    "${uv}" pip install --python "${env_root}/bin/python" \
+        "fastapi==${FASTAPI_VERSION}" \
+        "uvicorn==${UVICORN_VERSION}" \
+        "websockets==${WEBSOCKETS_VERSION}" \
+        requests pillow h5py opencv-python-headless
 
     log "copying and rebuilding the small ROS overlay in a neutral path"
     install -d "${ros_ws}/src"
@@ -349,6 +362,9 @@ assert sys.executable.startswith(root + "/env/"), sys.executable
 assert isaaclab.__file__.startswith(root + "/IsaacLab/"), isaaclab.__file__
 assert rclpy.__file__.startswith("/opt/ros/jazzy/"), rclpy.__file__
 assert md.version("isaacsim") == "6.0.1.0"
+assert md.version("fastapi") == "0.120.4"
+assert md.version("uvicorn") == "0.29.0"
+assert md.version("websockets") == "12.0"
 assert torch.__version__.startswith("2.10.0")
 assert torch.cuda.is_available()
 print("Python:", sys.executable)
@@ -374,16 +390,40 @@ args = parser.parse_args()
 launcher = AppLauncher(args)
 app = launcher.app
 try:
+    import carb
     from isaaclab.sim import SimulationCfg, SimulationContext
+    import isaaclab.sim as sim_utils
+    from isaaclab.scene import InteractiveScene, InteractiveSceneCfg
+    from isaaclab.sensors.camera import CameraCfg
+    from isaaclab.utils.configclass import configclass
+
+    settings = carb.settings.get_settings()
+    assert settings.get("/rtx/shaderDb/shaderCachePath") == os.environ["ISAAC_ROS2_SHADER_CACHE_DIR"]
+    assert settings.get("/rtx/shaderDb/driverShaderCachePath") == os.environ["ISAAC_ROS2_DRIVER_SHADER_CACHE_DIR"]
+    settings.set_bool("/isaaclab/cameras_enabled", True)
+
+    @configclass
+    class VerifySceneCfg(InteractiveSceneCfg):
+        camera = CameraCfg(
+            prim_path="/World/VerifyCamera",
+            update_period=0.0,
+            height=64,
+            width=64,
+            data_types=["rgb"],
+            spawn=sim_utils.PinholeCameraCfg(focal_length=21.0),
+        )
 
     simulation = SimulationContext(SimulationCfg(dt=0.01))
+    scene = InteractiveScene(VerifySceneCfg(num_envs=1, env_spacing=1.0))
     simulation.reset()
     simulation.step()
+    scene.update(simulation.get_physics_dt())
+    assert tuple(scene["camera"].data.output["rgb"].shape) == (1, 64, 64, 3)
     Path(os.environ["ISAAC_ROS2_VERIFY_SENTINEL"]).write_text("PASS\n")
-    print("ISAAC_EMPTY_SCENE_PASS", flush=True)
+    print("ISAAC_CAMERA_SCENE_PASS", flush=True)
 finally:
     app.close()
-'"'"' --enable_cameras --viz kit --kit_args "--portable --portable-root=${ISAAC_ROS2_PORTABLE_ROOT} --/app/userConfigPath=${ISAAC_ROS2_KIT_DATA_DIR}/user.config.json --/app/extensions/registryCache=${ISAAC_ROS2_KIT_DATA_DIR}/exts --/UJITSO/datastore/localCachePath=${ISAAC_ROS2_KIT_CACHE_DIR}/DerivedDataCache --/log/file=${ISAAC_ROS2_KIT_LOG_DIR}/verify.log --/crashreporter/dumpDir=${ISAAC_ROS2_KIT_CRASH_DIR}"
+'"'"' --enable_cameras --viz kit --kit_args "--portable --portable-root=${ISAAC_ROS2_PORTABLE_ROOT} --/app/userConfigPath=${ISAAC_ROS2_KIT_DATA_DIR}/user.config.json --/app/extensions/registryCache=${ISAAC_ROS2_KIT_DATA_DIR}/exts --/UJITSO/datastore/localCachePath=${ISAAC_ROS2_KIT_CACHE_DIR}/DerivedDataCache --/rtx/shaderDb/shaderCachePath=${ISAAC_ROS2_SHADER_CACHE_DIR} --/rtx/shaderDb/driverShaderCachePath=${ISAAC_ROS2_DRIVER_SHADER_CACHE_DIR} --/log/file=${ISAAC_ROS2_KIT_LOG_DIR}/verify.log --/crashreporter/dumpDir=${ISAAC_ROS2_KIT_CRASH_DIR}"
             test "$(cat "${verify_sentinel}")" = PASS || {
                 echo "Isaac empty-scene verification did not complete reset and step" >&2
                 exit 1

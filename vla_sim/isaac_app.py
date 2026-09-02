@@ -6,7 +6,9 @@ project can stay focused on scene setup and control logic.
 """
 
 import argparse
+import os
 import sys
+from pathlib import Path
 
 from isaaclab.app import AppLauncher
 
@@ -38,6 +40,38 @@ args_cli = parse_cli_args()
 
 # Preserve the original Isaac Sim application and its stage/render defaults.
 args_cli.experience = "isaacsim.exp.full.kit"
+
+
+def _use_writable_shader_cache() -> None:
+    """Keep runtime RTX caches in the active user's shared-runtime cache.
+
+    Isaac Sim's pip bundle defaults these two writable caches to its package
+    directory in portable mode.  That directory is read-only in the shared
+    workstation install, causing every camera process to repeat a roughly
+    one-minute RTX initialization.  The prebuilt shader caches remain in the
+    package; only newly generated runtime entries are redirected here.
+    """
+    cache_root = os.environ.get("ISAAC_ROS2_KIT_CACHE_DIR")
+    if not cache_root:
+        return
+
+    shader_cache = Path(cache_root) / "shadercache"
+    driver_cache = Path(cache_root) / "nv_shadercache"
+    shader_cache.mkdir(parents=True, exist_ok=True)
+    driver_cache.mkdir(parents=True, exist_ok=True)
+
+    kit_args = getattr(args_cli, "kit_args", "") or ""
+    settings = (
+        ("/rtx/shaderDb/shaderCachePath", shader_cache),
+        ("/rtx/shaderDb/driverShaderCachePath", driver_cache),
+    )
+    for setting, path in settings:
+        if f"--{setting}=" not in kit_args:
+            kit_args = f"{kit_args} --{setting}={path}".strip()
+    args_cli.kit_args = kit_args
+
+
+_use_writable_shader_cache()
 
 
 _launcher = None
