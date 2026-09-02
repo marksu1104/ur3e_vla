@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import argparse
 import sys
+import threading
+import time
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -23,7 +25,36 @@ _extra_args, _ = _extra.parse_known_args()
 
 from vla_sim.isaac_app import args_cli, boot_app, close_app, log
 
-app = boot_app()
+def _run_with_progress(label, operation):
+    """Run one startup stage with a low-noise heartbeat for SSH users."""
+    started = time.monotonic()
+    finished = threading.Event()
+
+    def report_progress() -> None:
+        while not finished.wait(15.0):
+            elapsed = time.monotonic() - started
+            print(f"[REMOTE] Still {label} ({elapsed:.0f}s elapsed)...", flush=True)
+
+    reporter = threading.Thread(target=report_progress, daemon=True)
+    reporter.start()
+    try:
+        return operation()
+    finally:
+        finished.set()
+        reporter.join(timeout=1.0)
+
+
+_app_start = time.monotonic()
+print(
+    "[REMOTE] Starting Isaac Sim application...",
+    flush=True,
+)
+app = _run_with_progress("starting Isaac Sim", boot_app)
+print(
+    f"[REMOTE] Isaac Sim application started in "
+    f"{time.monotonic() - _app_start:.1f}s.",
+    flush=True,
+)
 
 import numpy as np
 from vla_sim.actions import PoseTrajectoryPlayer
@@ -88,16 +119,33 @@ def main() -> None:
     )
     bridge.start()
     bridge.set_state("starting")
+    print(
+        f"[REMOTE] Bridge listening on {BRIDGE_HOST}:{port}; state=starting.",
+        flush=True,
+    )
     try:
-        runtime = SimulationRuntime(
-            RuntimeOptions(
-                scene_profile="remote",
-                stream_width=_extra_args.stream_width,
-                stream_height=_extra_args.stream_height,
-                show_markers=_extra_args.show_markers,
-                device=args_cli.device,
-            )
-        ).start()
+        runtime_start = time.monotonic()
+        print(
+            "[REMOTE] Loading robot, scene, fixtures, physics, and YOLO camera...",
+            flush=True,
+        )
+        runtime = _run_with_progress(
+            "initializing the scene and RTX renderer",
+            lambda: SimulationRuntime(
+                RuntimeOptions(
+                    scene_profile="remote",
+                    stream_width=_extra_args.stream_width,
+                    stream_height=_extra_args.stream_height,
+                    show_markers=_extra_args.show_markers,
+                    device=args_cli.device,
+                )
+            ).start(),
+        )
+        print(
+            f"[REMOTE] Scene initialized in {time.monotonic() - runtime_start:.1f}s; "
+            "settling physics and warming the camera...",
+            flush=True,
+        )
         scene = runtime.scene
         controller = runtime.robot_controller
         if scene is None or controller is None:
@@ -123,6 +171,7 @@ def main() -> None:
         frozen_quat = EE_ORIENT_DOWN
         logical_grip = 0.0
         step = 0
+        ready_announced = False
         bridge.set_state("resetting", seed=seed)
 
         while app.is_running():
@@ -134,7 +183,7 @@ def main() -> None:
                     target = scene[command["object"]]
                     resting = as_torch(target.data.root_pos_w)[0].cpu().numpy()
                     rotation = (
-                        pose_wxyz_from_sim(target.data.root_state_w)[0, 3:7]
+                        pose_wxyz_from_sim(target.data.root_link_pose_w)[0, 3:7]
                         .cpu()
                         .numpy()
                     )
@@ -331,6 +380,30 @@ def main() -> None:
                     bridge.publish_frame(
                         as_torch(rgb)[0].cpu().numpy().astype(np.uint8)
                     )
+                    if (
+                        state == "waiting"
+                        and not ready_announced
+                        and bridge.has_encoded_frame
+                    ):
+                        camera_cfg = scene["camera_yolo"].cfg
+                        print("\n" + "=" * 72, flush=True)
+                        print(
+                            "[REMOTE READY] Isaac scene, camera, and bridge are ready.",
+                            flush=True,
+                        )
+                        print(
+                            f"[REMOTE READY] Stream: {camera_cfg.width}x{camera_cfg.height} "
+                            f"at ws://{BRIDGE_HOST}:{port}/unity",
+                            flush=True,
+                        )
+                        print(
+                            f"[REMOTE READY] Status: "
+                            f"http://{BRIDGE_HOST}:{port}/status",
+                            flush=True,
+                        )
+                        print("[REMOTE READY] Unity may start the experiment now.", flush=True)
+                        print("=" * 72 + "\n", flush=True)
+                        ready_announced = True
             step += 1
     except KeyboardInterrupt:
         log("Ctrl+C received.")

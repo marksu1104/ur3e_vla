@@ -269,7 +269,7 @@ class RobotController:
 
     def apply_physics_targets(self) -> None:
         """Apply IK arm targets and the single official Robotiq drive joint."""
-        root_pos = as_torch(self.robot.data.root_state_w)[:, :3]
+        root_pos = as_torch(self.robot.data.root_link_pose_w)[:, :3]
         ee_pose_w = as_torch(self.robot.data.body_state_w)[:, self.ee_body_idx, :7]
         ee_pos_b = ee_pose_w[:, :3] - root_pos
         ee_quat_b = ee_pose_w[:, 3:]

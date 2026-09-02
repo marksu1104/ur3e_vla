@@ -96,6 +96,7 @@ class BridgeServer:
 
         self._frame_lock = threading.Lock()
         self._latest_frame: np.ndarray | None = None
+        self._latest_jpeg: bytes | None = None
 
         self._loop: asyncio.AbstractEventLoop | None = None
         self._frame_event: asyncio.Event | None = None
@@ -207,6 +208,10 @@ class BridgeServer:
         # of accumulating visible latency.
         client = _ClientQueues(asyncio.Queue(maxsize=1), asyncio.Queue())
         self._clients[client_id] = client
+        with self._frame_lock:
+            latest_jpeg = self._latest_jpeg
+        if latest_jpeg is not None:
+            client.frames.put_nowait(latest_jpeg)
         disconnect_task = asyncio.create_task(
             self._wait_for_disconnect(websocket),
             name=f"remote-bridge-disconnect-{client_id}",
@@ -351,6 +356,9 @@ class BridgeServer:
             return
         self._ready.clear()
         self._startup_error = None
+        with self._frame_lock:
+            self._latest_frame = None
+            self._latest_jpeg = None
         config = uvicorn.Config(
             self._app,
             host=self.host,
@@ -426,6 +434,12 @@ class BridgeServer:
                 loop.call_soon_threadsafe(frame_event.set)
             except RuntimeError:
                 pass
+
+    @property
+    def has_encoded_frame(self) -> bool:
+        """Return whether at least one stream-ready JPEG is cached."""
+        with self._frame_lock:
+            return self._latest_jpeg is not None
 
     def set_state(self, state: str, **fields) -> None:
         """Transition public state and push exactly one matching state event."""
@@ -543,6 +557,8 @@ class BridgeServer:
             if frame is None:
                 continue
             jpeg = await asyncio.to_thread(_encode_jpeg, frame, self.jpeg_quality)
+            with self._frame_lock:
+                self._latest_jpeg = jpeg
             with self._status_lock:
                 self._status["frames_sent"] += 1
             for client in tuple(self._clients.values()):
