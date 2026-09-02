@@ -76,6 +76,9 @@ from vla_sim.sim_real_sync import (
 from vla_sim.visibility import object_visibility_report
 
 
+SETTLE_STEPS = 120
+
+
 def _scene_status(runtime: SimulationRuntime, backend: JointSyncBackend, seed: int) -> dict:
     scene = runtime.scene
     controller = runtime.robot_controller
@@ -92,6 +95,41 @@ def _scene_status(runtime: SimulationRuntime, backend: JointSyncBackend, seed: i
         "joint_sync": backend.status,
         "ee_position": controller.ee_position.round(5).tolist(),
     }
+
+
+def _publish_yolo_frame(runtime: SimulationRuntime, bridge: BridgeServer) -> None:
+    """Publish the latest YOLO camera frame when one is available."""
+    rgb = runtime.latest_yolo_rgb()
+    if rgb is not None:
+        bridge.publish_frame(as_torch(rgb)[0].cpu().numpy().astype(np.uint8))
+
+
+def _apply_real_to_sim_control(
+    command: dict,
+    runtime: SimulationRuntime,
+    backend: JointSyncBackend,
+    bridge: BridgeServer,
+    state: str,
+    seed: int,
+) -> tuple[str, int]:
+    """Apply a bridge control command without changing the sync loop order."""
+    if command["type"] != "control":
+        return state, seed
+    action = command["action"]
+    if action == "pause":
+        backend.paused = True
+        state = "paused"
+        bridge.set_state(state, **_scene_status(runtime, backend, seed))
+    elif action == "resume":
+        backend.paused = False
+        state = "running" if backend.last_snapshot.is_live else "hold"
+        bridge.set_state(state, **_scene_status(runtime, backend, seed))
+    elif action == "reset":
+        seed = seed if command["seed"] is None else command["seed"]
+        runtime.reset_targets()
+        bridge.set_state("resetting", seed=seed, joint_sync=backend.status)
+        state = "resetting"
+    return state, seed
 
 
 def _sync_options() -> SyncOptions:
@@ -177,7 +215,7 @@ def main() -> None:
             state_backend=backend,
         ).start()
         runtime.reset_targets()
-        for _ in range(120):
+        for _ in range(SETTLE_STEPS):
             runtime.step()
         rclpy.init()
         subscriber = ROSJointStateSubscriber(_extra_args.joint_states_topic, latest)
@@ -225,23 +263,9 @@ def main() -> None:
             command = bridge.poll_command()
             if command is not None:
                 bridge.command_applied(command)
-                if command["type"] == "control":
-                    action = command["action"]
-                    if action == "pause":
-                        backend.paused = True
-                        state = "paused"
-                        bridge.set_state(state, **_scene_status(runtime, backend, seed))
-                    elif action == "resume":
-                        backend.paused = False
-                        state = (
-                            "running" if backend.last_snapshot.is_live else "hold"
-                        )
-                        bridge.set_state(state, **_scene_status(runtime, backend, seed))
-                    elif action == "reset":
-                        seed = seed if command["seed"] is None else command["seed"]
-                        runtime.reset_targets()
-                        bridge.set_state("resetting", seed=seed, joint_sync=backend.status)
-                        state = "resetting"
+                state, seed = _apply_real_to_sim_control(
+                    command, runtime, backend, bridge, state, seed
+                )
 
             runtime.step()
             snapshot = backend.status
@@ -257,9 +281,7 @@ def main() -> None:
                 bridge.update_status(joint_sync=snapshot, ee_position=ee_position)
 
             if step % stream_every == 0:
-                rgb = runtime.latest_yolo_rgb()
-                if rgb is not None:
-                    bridge.publish_frame(as_torch(rgb)[0].cpu().numpy().astype(np.uint8))
+                _publish_yolo_frame(runtime, bridge)
             step += 1
     except KeyboardInterrupt:
         log("Ctrl+C received.")
