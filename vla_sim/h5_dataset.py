@@ -1,6 +1,6 @@
 """Dataset collection buffers and HDF5 export helpers."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import numpy as np
@@ -10,13 +10,13 @@ import numpy as np
 class EpisodeBuffer:
     """In-memory data for one collected demonstration episode."""
 
-    main_images: list
-    wrist_images: list
-    ee_poses: list
-    joint_positions: list
-    gripper_states: list
-    actions_7d: list
-    timestamps: list
+    main_images: list = field(default_factory=list)
+    wrist_images: list = field(default_factory=list)
+    ee_poses: list = field(default_factory=list)
+    joint_positions: list = field(default_factory=list)
+    gripper_states: list = field(default_factory=list)
+    actions_7d: list = field(default_factory=list)
+    timestamps: list = field(default_factory=list)
 
 
 def build_episode_arrays(buffer: EpisodeBuffer, instruction: str) -> dict:

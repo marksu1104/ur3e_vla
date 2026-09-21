@@ -257,7 +257,7 @@ def _run_batch(sim, scene, robot, ik, sim_dt, arm_ids_t, finger_ids_t, ee_body_i
         arm_ids_t, finger_ids_t,
     )
 
-    buffers = [EpisodeBuffer([], [], [], [], [], [], []) for _ in range(num_envs)]
+    buffers = [EpisodeBuffer() for _ in range(num_envs)]
     prev_ee_pos = [None] * num_envs
     prev_ee_quat = [None] * num_envs
     last_grip = np.full(num_envs, GRIPPER_OPEN, dtype=np.float32)
@@ -411,7 +411,8 @@ def main():
     out_dir = out_dir_rel if out_dir_rel.is_absolute() else PROJECT_ROOT / out_dir_rel
     if out_dir.name != target_name:
         out_dir = out_dir / target_name
-    out_dir.mkdir(parents=True, exist_ok=True)
+    if not _extra_args.no_save_h5 or _extra_args.record_video:
+        out_dir.mkdir(parents=True, exist_ok=True)
     h5_path = out_dir / "demos.h5"
     if _extra_args.overwrite and h5_path.exists() and not _extra_args.no_save_h5:
         h5_path.unlink()

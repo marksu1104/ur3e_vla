@@ -75,7 +75,7 @@ def run_one_episode(
         TARGETS[target_name], target_resting, target_rot, place_xy
     )
     player = PoseTrajectoryPlayer(trajectory, device=runtime.device)
-    buffer = EpisodeBuffer([], [], [], [], [], [], [])
+    buffer = EpisodeBuffer()
 
     previous_pos = None
     previous_quat = None
@@ -176,8 +176,9 @@ def main() -> None:
         output_root = PROJECT_ROOT / output_root
     output_dir = output_root if output_root.name == target_name else output_root / target_name
     h5_path = output_dir / "demos.h5"
-    output_dir.mkdir(parents=True, exist_ok=True)
-    if _extra_args.overwrite and h5_path.exists():
+    if not _extra_args.no_save_h5:
+        output_dir.mkdir(parents=True, exist_ok=True)
+    if _extra_args.overwrite and h5_path.exists() and not _extra_args.no_save_h5:
         h5_path.unlink()
     if h5_path.exists() and not _extra_args.no_save_h5:
         raise FileExistsError(
