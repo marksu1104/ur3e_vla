@@ -29,21 +29,19 @@ from vla_sim.config import (
     get_scene_profile,
 )
 from vla_sim.isaac_app import log
-from vla_sim.fixtures import prepare_destination_fixtures
 from vla_sim.planning import GRIPPER_SPEED_RAD_S
 from vla_sim.scene import (
-    make_scene_cfg,
-    quat_isaac_to_wxyz,
-    quat_wxyz_to_isaac,
-    spawn_assembled_robot,
-)
-from vla_sim.visuals import (
     bind_gripper_pad_visuals,
     configure_gripper_pads,
     hide_markers,
+    make_scene_cfg,
+    prepare_destination_fixtures,
     prepare_target_visuals,
+    quat_isaac_to_wxyz,
+    quat_wxyz_to_isaac,
     set_marker_material,
     set_plastic_material,
+    spawn_assembled_robot,
 )
 
 

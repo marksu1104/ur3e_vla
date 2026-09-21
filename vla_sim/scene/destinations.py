@@ -26,11 +26,11 @@ from vla_sim.config import (
     TABLE_MAT_SIZE,
     TARGETS,
 )
-from vla_sim.scene import quat_wxyz_to_isaac
-from vla_sim.visuals import set_plastic_material
+from .base_scene import quat_wxyz_to_isaac
+from .materials import set_plastic_material
 
 
-ASSET_DIR = Path(__file__).resolve().parent.parent / "assets"
+ASSET_DIR = Path(__file__).resolve().parents[2] / "assets"
 
 
 def prepare_destination_fixtures(stage) -> None:

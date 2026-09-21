@@ -1,4 +1,4 @@
-"""Canonical three-object scene and its USD presentation helpers."""
+"""Shared base scene for every single-environment UR3e workflow."""
 
 from __future__ import annotations
 
@@ -58,7 +58,7 @@ from vla_sim.config import (
     get_scene_profile,
 )
 
-ASSET_DIR = Path(__file__).resolve().parent.parent / "assets"
+ASSET_DIR = Path(__file__).resolve().parents[2] / "assets"
 ISAAC_QUAT_XYZW = AssetBaseCfg.InitialStateCfg().rot == (0.0, 0.0, 0.0, 1.0)
 
 
@@ -433,5 +433,5 @@ def make_scene_cfg(
 
 
 # Compatibility export required by the active MultiView workstream. Canonical
-# code imports presentation helpers directly from vla_sim.visuals.
-from vla_sim.visuals import set_plastic_material  # noqa: E402,F401
+# code imports presentation helpers directly from vla_sim.scene.materials.
+from vla_sim.scene.materials import set_plastic_material  # noqa: E402,F401

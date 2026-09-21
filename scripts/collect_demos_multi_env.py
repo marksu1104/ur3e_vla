@@ -100,9 +100,9 @@ from vla_sim.scene import (
     make_target_cfg,
     make_wrist_camera_cfg,
     quat_wxyz_to_isaac,
+    apply_target_colors,
 )
 from vla_sim.runtime import as_torch, pose_wxyz_from_sim
-from vla_sim.visuals import apply_target_colors
 
 np.random.seed(_extra_args.seed)
 

@@ -65,8 +65,7 @@ import isaaclab.sim as sim_utils
 import omni.usd
 from pxr import Sdf, Usd, UsdGeom
 
-from vla_sim.scene import enable_extensions, spawn_raw_and_assemble
-from vla_sim.visuals import configure_gripper_pads
+from vla_sim.scene import configure_gripper_pads, enable_extensions, spawn_raw_and_assemble
 
 
 _GRIPPER_MARKERS = (
