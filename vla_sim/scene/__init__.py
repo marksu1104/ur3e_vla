@@ -7,6 +7,7 @@ scene internals evolve.
 
 from .base_scene import (
     ASSET_DIR,
+    BaseSceneCfg,
     ISAAC_QUAT_XYZW,
     SceneCfg,
     enable_extensions,
@@ -34,16 +35,27 @@ from .materials import (
     set_plastic_material,
 )
 from .destinations import prepare_destination_fixtures
+from .scene_options import (
+    SCENE_OPTIONS,
+    LightingSettings,
+    SceneOptions,
+    get_scene_options,
+)
 
 __all__ = [
     "ASSET_DIR",
+    "BaseSceneCfg",
     "ISAAC_QUAT_XYZW",
+    "LightingSettings",
+    "SCENE_OPTIONS",
     "SceneCfg",
+    "SceneOptions",
     "apply_target_colors",
     "bind_gripper_pad_visuals",
     "configure_gripper_pads",
     "enable_extensions",
     "hide_markers",
+    "get_scene_options",
     "make_camera_cfg",
     "make_policy_camera_cfg",
     "make_robot_cfg",

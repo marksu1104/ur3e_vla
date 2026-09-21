@@ -35,7 +35,6 @@ from vla_sim.config import (
     ROBOT_BASE_POS,
     ROBOT_BASE_ROT,
     ROBOT_PRIM_PATH,
-    SceneProfile,
     STREAM_HEIGHT,
     STREAM_WIDTH,
     TABLE_A_POS,
@@ -55,8 +54,8 @@ from vla_sim.config import (
     YOLO_CAMERA_FOCAL,
     YOLO_CAMERA_POS,
     YOLO_CAMERA_ROT,
-    get_scene_profile,
 )
+from .scene_options import SceneOptions, get_scene_options
 
 ASSET_DIR = Path(__file__).resolve().parents[2] / "assets"
 ISAAC_QUAT_XYZW = AssetBaseCfg.InitialStateCfg().rot == (0.0, 0.0, 0.0, 1.0)
@@ -361,7 +360,7 @@ def _target_cfg(name: str):
 
 
 @configclass
-class SceneCfg(InteractiveSceneCfg):
+class BaseSceneCfg(InteractiveSceneCfg):
     """The canonical single-arm scene for all runtimes."""
 
     if ISAAC_QUAT_XYZW:
@@ -409,11 +408,11 @@ def make_scene_cfg(
     env_spacing: float = 2.0,
     stream_width: int | None = None,
     stream_height: int | None = None,
-    profile: str | SceneProfile = "canonical",
-) -> SceneCfg:
+    profile: str | SceneOptions = "canonical",
+) -> BaseSceneCfg:
     """Compose the canonical physics scene for one named workflow."""
-    resolved = get_scene_profile(profile)
-    cfg = SceneCfg(num_envs=num_envs, env_spacing=env_spacing)
+    resolved = get_scene_options(profile)
+    cfg = BaseSceneCfg(num_envs=num_envs, env_spacing=env_spacing)
     for camera_name in ("camera_yolo", "camera_policy", "camera_wrist"):
         if camera_name not in resolved.cameras:
             setattr(cfg, camera_name, None)
@@ -430,6 +429,10 @@ def make_scene_cfg(
         cfg.camera_fill_light.spawn.radius = resolved.lighting.fill_radius
         cfg.camera_fill_light.init_state.pos = resolved.lighting.fill_position
     return cfg
+
+
+# Temporary compatibility alias for external or in-progress MultiView code.
+SceneCfg = BaseSceneCfg
 
 
 # Compatibility export required by the active MultiView workstream. Canonical

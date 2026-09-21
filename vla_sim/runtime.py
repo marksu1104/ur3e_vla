@@ -26,13 +26,13 @@ from vla_sim.config import (
     PLACE_MARKER_COLORS,
     ROBOT_BASE_POS,
     ROBOT_BASE_ROT,
-    get_scene_profile,
 )
 from vla_sim.isaac_app import log
 from vla_sim.planning import GRIPPER_SPEED_RAD_S
 from vla_sim.scene import (
     bind_gripper_pad_visuals,
     configure_gripper_pads,
+    get_scene_options,
     hide_markers,
     make_scene_cfg,
     prepare_destination_fixtures,
@@ -303,7 +303,7 @@ class SimulationRuntime:
         state_backend: StateBackend | None = None,
     ):
         self.options = options or RuntimeOptions()
-        self.profile = get_scene_profile(self.options.scene_profile)
+        self.profile = get_scene_options(self.options.scene_profile)
         self.state_backend = state_backend or PhysicsDriveBackend()
         self.sim = None
         self.scene = None
