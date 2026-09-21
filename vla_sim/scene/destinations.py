@@ -26,7 +26,7 @@ from vla_sim.config import (
     TABLE_MAT_SIZE,
     TARGETS,
 )
-from .base_scene import quat_wxyz_to_isaac
+from .assets import quat_wxyz_to_isaac
 from .materials import set_plastic_material
 
 
