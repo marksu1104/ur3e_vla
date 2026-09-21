@@ -1,4 +1,4 @@
-"""Project constants and named scene profiles safe before Isaac Lab starts."""
+"""Shared numeric constants for robot, scene, task, and bridge behavior."""
 
 from __future__ import annotations
 

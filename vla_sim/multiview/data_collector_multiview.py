@@ -1,12 +1,11 @@
-"""新增 top, left, right cameras & targets poses
-Episode buffer + HDF5 export additions for the two extra camera views.
+"""Episode buffer and HDF5 export additions for the three MultiView cameras.
 
-Does not modify vla_sim/data_collector.py. ``EpisodeBuffer`` is a plain
+``EpisodeBuffer`` is a plain
 dataclass with 7 required fields and no extension point, and
 ``append_episode_h5`` writes a fixed set of datasets, so instead of
 editing either:
 
-- ``MultiviewEpisodeBuffer`` subclasses ``EpisodeBuffer`` and adds two
+- ``MultiviewEpisodeBuffer`` subclasses ``EpisodeBuffer`` and adds three
   new fields with empty-list defaults, so existing positional/keyword
   construction of ``EpisodeBuffer`` elsewhere keeps working unchanged.
 - ``append_episode_h5_multiview`` calls the original
@@ -28,7 +27,6 @@ from vla_sim.h5_dataset import EpisodeBuffer, append_episode_h5
 
 def _empty_pose_lists() -> dict:
     return {name: [] for name in TARGET_KEYS}
-
 @dataclass
 class MultiviewEpisodeBuffer(EpisodeBuffer):
     """EpisodeBuffer plus the two extra third-person camera streams."""

@@ -36,14 +36,17 @@ datasets separate because their objects and gripper action representation differ
 - `scripts/collect_demos_multi_env.py`: vectorized demonstration collection.
 - `docs/command_reference.md`: explicit terminal commands for normal runs and custom runs.
 - `docs/`: runbooks, operational notes, and artifact policy.
-- `vla_sim/config.py`: shared values plus named workflow scene profiles.
-- `vla_sim/scene.py`: canonical robot, object, light, and camera construction.
-- `vla_sim/visuals.py`: render-only materials and mesh presentation.
-- `vla_sim/fixtures.py`: remote destination and reference props.
-- `vla_sim/runtime.py`: stepping, controllers, and state backends.
+- `vla_sim/config.py`: shared numeric scene and task values.
+- `vla_sim/scene/base_scene.py`: canonical scene assembly, lights, and markers.
+- `vla_sim/scene/assets.py`: robot, furniture, movable objects, and USD assets.
+- `vla_sim/scene/cameras.py`: YOLO, policy, wrist, and reusable camera builders.
+- `vla_sim/scene/materials.py`: render-only materials and mesh presentation.
+- `vla_sim/scene/destinations.py`: remote destination and reference props.
+- `vla_sim/scene/scene_options.py`: named workflow camera, fixture, and lighting selections.
+- `vla_sim/simulation.py`: stepping, controllers, and state backends.
 - `vla_sim/multiview/`: isolated MultiView experiment owned by its active workstream.
 
-Avoid copying a scene class into a new entry point. Compose a named profile from
-the shared scene and keep workflow-specific additions out of profiles that do
-not use them. This keeps local lighting, camera, and prop experiments from
-changing collection, VLA, synchronization, or MultiView unexpectedly.
+Avoid copying a scene class into a new entry point. Select named scene options
+from the shared base scene and keep workflow-specific additions out of options
+that do not use them. This keeps local lighting, camera, and prop experiments
+from changing collection, VLA, synchronization, or MultiView unexpectedly.

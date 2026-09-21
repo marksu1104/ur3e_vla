@@ -44,21 +44,25 @@ changing data collection or VLA rollout.
 
 | Change | Authoritative location |
 | --- | --- |
-| Positions, materials, lighting values, and profile membership | `vla_sim/config.py` |
-| Robot, object, light, and camera construction | `vla_sim/scene.py` |
-| Render materials, smoothing, and visual-only presentation | `vla_sim/visuals.py` |
-| Remote destination/reference props | `vla_sim/fixtures.py` |
-| Simulation stepping, controllers, and state backends | `vla_sim/runtime.py` |
+| Shared numeric scene and task values | `vla_sim/config.py` |
+| Base scene assembly, lights, and placement markers | `vla_sim/scene/base_scene.py` |
+| Robot, furniture, movable objects, and USD assets | `vla_sim/scene/assets.py` |
+| YOLO, policy, wrist, and reusable camera construction | `vla_sim/scene/cameras.py` |
+| Render materials and visual-only presentation | `vla_sim/scene/materials.py` |
+| Remote destination/reference props | `vla_sim/scene/destinations.py` |
+| Workflow camera/fixture/light selections | `vla_sim/scene/scene_options.py` |
+| Simulation stepping, controllers, and state backends | `vla_sim/simulation.py` |
 | Workflow-only behavior and CLI | the corresponding file under `scripts/` |
 | MultiView experiment | `vla_sim/multiview/` and `scripts/collect_demos_multi_view.py` |
 
-Add a reusable camera builder in `scene.py`, then list it only in the profiles
-that need it in `config.py`. Give a workflow its own `LightingSettings` when its
-lighting must differ. Put shared physical objects in the canonical scene; put
-presentation-only destination props in `fixtures.py`. New entry points should
-select a profile and reuse the runtime instead of copying a `SceneCfg` or robot
-configuration. MultiView remains isolated so its ongoing development is not
-changed by routine canonical-scene work.
+Add a reusable camera builder in `scene/cameras.py`, then select it only in the
+appropriate `SceneOptions`. Give a workflow its own `LightingSettings` when its
+lighting must differ. Put shared physical objects in `scene/assets.py`; put
+presentation-only destination props in `scene/destinations.py`. New entry
+points should select scene options and reuse `SimulationRuntime` instead of
+copying `BaseSceneCfg` or robot configuration. `MultiviewSceneCfg` is the
+intentional inheritance example: it extends `BaseSceneCfg` only because it adds
+fixed camera entities.
 
 This follows Isaac Lab's compositional `configclass` and `InteractiveSceneCfg`
 model while retaining the Standalone workflow needed for explicit bridge and
@@ -176,7 +180,7 @@ manifest before redistributing derived YCB/NVIDIA geometry.
 - Keep generated data and models under `outputs/`; it is ignored by Git.
 - Put smoke-test artifacts under `outputs/test/`.
 - Do not commit model exports or generated H5 data.
-- Treat `SCENE_PROFILES` as workflow composition, not as a second set of scene
+- Treat `SCENE_OPTIONS` as workflow composition, not as a second set of scene
   constants. Change a shared physical property once at its authoritative source.
-- `bridge.py` is the persistent transport contract. Do not replace it
+- `remote_bridge.py` is the persistent transport contract. Do not replace it
   with the manual Python client in production.
