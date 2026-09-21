@@ -40,7 +40,7 @@ from vla_sim.config import (
     MUG_COASTER_HEIGHT,
     MUG_COASTER_RADIUS,
 )
-from vla_sim.runtime import RuntimeOptions, SimulationRuntime
+from vla_sim.simulation import RuntimeOptions, SimulationRuntime
 
 
 PARTS = {

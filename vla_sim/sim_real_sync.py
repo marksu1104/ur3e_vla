@@ -2,7 +2,7 @@
 
 This module owns the behavior unique to ``scripts/sync_sim_real.py``.  The
 only code allowed to publish commands to the physical robot remains isolated
-in ``vla_sim.real_arm_io``.
+in ``vla_sim.ur3e_ros``.
 """
 
 from __future__ import annotations
@@ -24,8 +24,8 @@ from vla_sim.config import (
     ROBOT_BASE_ROT,
     TARGETS,
 )
-from vla_sim.planning import build_pick_place_trajectory
-from vla_sim.runtime import ExternalStateBackend, pose_wxyz_from_sim
+from vla_sim.pick_place import build_pick_place_trajectory
+from vla_sim.simulation import ExternalStateBackend, pose_wxyz_from_sim
 
 
 SUPPORTED_TASK_PAIR = (1, 2)

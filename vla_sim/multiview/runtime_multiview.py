@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from vla_sim.config import UR3E_MOUNT_ABS
 from vla_sim.isaac_app import log
-from vla_sim.runtime import SimulationRuntime
+from vla_sim.simulation import SimulationRuntime
 from vla_sim.scene import set_plastic_material
 from vla_sim.multiview.gripper_marker import attach_gripper_marker
 from vla_sim.multiview.scene_multiview import make_multiview_scene_cfg

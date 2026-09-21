@@ -32,9 +32,9 @@ app = boot_app()
 
 from vla_sim.actions import PoseTrajectoryPlayer, compute_action_from_ee_poses
 from vla_sim.config import PLACE_POSITIONS, TARGETS
-from vla_sim.data_collector import EpisodeBuffer, append_episode_h5
-from vla_sim.planning import build_pick_place_trajectory, detect_success
-from vla_sim.runtime import (
+from vla_sim.h5_dataset import EpisodeBuffer, append_episode_h5
+from vla_sim.pick_place import build_pick_place_trajectory, detect_success
+from vla_sim.simulation import (
     RuntimeOptions,
     SimulationRuntime,
     as_torch,

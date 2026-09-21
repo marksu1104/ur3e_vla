@@ -32,7 +32,7 @@ app = boot_app()
 
 from vla_sim.actions import apply_delta_action, clamp_action
 from vla_sim.config import TARGET_KEYS, WORKSPACE_X, WORKSPACE_Y, WORKSPACE_Z
-from vla_sim.runtime import (
+from vla_sim.simulation import (
     RuntimeOptions,
     SimulationRuntime,
     as_torch,

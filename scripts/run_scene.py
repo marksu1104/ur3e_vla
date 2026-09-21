@@ -19,7 +19,7 @@ from vla_sim.isaac_app import args_cli, boot_app, close_app, log
 
 app = boot_app()
 
-from vla_sim.runtime import RuntimeOptions, SimulationRuntime
+from vla_sim.simulation import RuntimeOptions, SimulationRuntime
 
 
 def main() -> None:

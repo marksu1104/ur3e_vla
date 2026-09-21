@@ -28,7 +28,7 @@ from vla_sim.config import (
     ROBOT_BASE_ROT,
 )
 from vla_sim.isaac_app import log
-from vla_sim.planning import GRIPPER_SPEED_RAD_S
+from vla_sim.pick_place import GRIPPER_SPEED_RAD_S
 from vla_sim.scene import (
     bind_gripper_pad_visuals,
     configure_gripper_pads,

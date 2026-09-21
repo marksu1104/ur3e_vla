@@ -23,7 +23,7 @@ from pathlib import Path
 import numpy as np
 
 from vla_sim.config import TARGET_KEYS
-from vla_sim.data_collector import EpisodeBuffer, append_episode_h5
+from vla_sim.h5_dataset import EpisodeBuffer, append_episode_h5
 
 
 def _empty_pose_lists() -> dict:
@@ -48,7 +48,7 @@ def append_episode_h5_multiview(
 ) -> None:
     """Append one episode, including the two extra camera views.
 
-    Reuses ``vla_sim.data_collector.append_episode_h5`` for the 5 core
+    Reuses ``vla_sim.h5_dataset.append_episode_h5`` for the 5 core
     datasets (image, other/hand_image, robot_state, action, task) so
     that logic never has to be duplicated/kept in sync by hand, then
     adds the two new views under the same episode group.

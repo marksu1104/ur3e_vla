@@ -54,7 +54,7 @@ app = boot_app()
 
 import numpy as np
 
-from vla_sim.bridge import BridgeServer
+from vla_sim.remote_bridge import BridgeServer
 from vla_sim.config import (
     BRIDGE_HOST,
     BRIDGE_PORT,
@@ -64,7 +64,7 @@ from vla_sim.config import (
     TARGET_KEYS,
     TASK_INDEX_MAP,
 )
-from vla_sim.runtime import RuntimeOptions, SimulationRuntime, as_torch
+from vla_sim.simulation import RuntimeOptions, SimulationRuntime, as_torch
 from vla_sim.sim_real_sync import (
     JointSyncBackend,
     LatestJointState,
@@ -73,7 +73,7 @@ from vla_sim.sim_real_sync import (
     SyncOptions,
     run_sim_to_real,
 )
-from vla_sim.visibility import object_visibility_report
+from vla_sim.yolo_checks import object_visibility_report
 
 
 SETTLE_STEPS = 120
@@ -224,7 +224,7 @@ def main() -> None:
         step = 0
 
         if sim_to_real:
-            from vla_sim.real_arm_io import RealArmCommander
+            from vla_sim.ur3e_ros import RealArmCommander
 
             log("Waiting for a live joint state before commanding the real arm...")
             while app.is_running() and not backend.last_snapshot.is_live:

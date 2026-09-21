@@ -86,8 +86,8 @@ from vla_sim.config import (
     WRIST_CAMERA_HEIGHT,
     WRIST_CAMERA_WIDTH,
 )
-from vla_sim.data_collector import EpisodeBuffer, VideoRecorder, append_episode_h5
-from vla_sim.planning import (
+from vla_sim.h5_dataset import EpisodeBuffer, VideoRecorder, append_episode_h5
+from vla_sim.pick_place import (
     GRIPPER_SPEED_RAD_S,
     build_pick_place_trajectory,
     evaluate_pick_place_success,
@@ -102,7 +102,7 @@ from vla_sim.scene import (
     quat_wxyz_to_isaac,
     apply_target_colors,
 )
-from vla_sim.runtime import as_torch, pose_wxyz_from_sim
+from vla_sim.simulation import as_torch, pose_wxyz_from_sim
 
 np.random.seed(_extra_args.seed)
 

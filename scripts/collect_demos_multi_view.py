@@ -5,9 +5,9 @@ Collect 5 Hz H5 demonstrations, recording two extra third-person cameras.
 Copy of scripts/collect_demos.py that swaps in the multiview runtime,
 buffer, and H5 exporter. vla_sim/*.py is untouched; only the pieces in
 this multiview/ package differ:
-  - vla_sim.runtime.SimulationRuntime           -> MultiviewSimulationRuntime
-  - vla_sim.data_collector.EpisodeBuffer         -> MultiviewEpisodeBuffer
-  - vla_sim.data_collector.append_episode_h5     -> append_episode_h5_multiview
+  - vla_sim.simulation.SimulationRuntime         -> MultiviewSimulationRuntime
+  - vla_sim.h5_dataset.EpisodeBuffer             -> MultiviewEpisodeBuffer
+  - vla_sim.h5_dataset.append_episode_h5         -> append_episode_h5_multiview
 
 COMMAND
 
@@ -31,9 +31,9 @@ cd ~/IsaacLab
 Copy of scripts/collect_demos.py that swaps in the multiview runtime,
 buffer, and H5 exporter. vla_sim/*.py is untouched; only the pieces in
 this multiview/ package differ:
-  - vla_sim.runtime.SimulationRuntime           -> MultiviewSimulationRuntime
-  - vla_sim.data_collector.EpisodeBuffer         -> MultiviewEpisodeBuffer
-  - vla_sim.data_collector.append_episode_h5     -> append_episode_h5_multiview
+  - vla_sim.simulation.SimulationRuntime         -> MultiviewSimulationRuntime
+  - vla_sim.h5_dataset.EpisodeBuffer             -> MultiviewEpisodeBuffer
+  - vla_sim.h5_dataset.append_episode_h5         -> append_episode_h5_multiview
 """
 
 
@@ -70,10 +70,10 @@ app = boot_app()
 
 from vla_sim.actions import PoseTrajectoryPlayer, compute_action_from_ee_poses
 from vla_sim.config import PLACE_POSITIONS, TARGETS, TARGET_KEYS
-from vla_sim.planning import build_pick_place_trajectory, detect_success
-from vla_sim.runtime import RuntimeOptions, as_torch, pose_wxyz_from_sim
+from vla_sim.pick_place import build_pick_place_trajectory, detect_success
+from vla_sim.simulation import RuntimeOptions, as_torch, pose_wxyz_from_sim
 
-from vla_sim.data_collector import VideoRecorder
+from vla_sim.h5_dataset import VideoRecorder
 
 from vla_sim.multiview.data_collector_multiview import (
     MultiviewEpisodeBuffer,
@@ -108,7 +108,7 @@ def save_episode_videos(
 ) -> None:
     """Dump the already-buffered frames of a successful episode to mp4.
 
-    Reuses vla_sim.data_collector.VideoRecorder as-is; frames are already
+    Reuses vla_sim.h5_dataset.VideoRecorder as-is; frames are already
     sitting in memory in `buffer` by the time an episode is known to have
     succeeded, so no realtime/streaming write during the sim loop is needed.
     """
@@ -366,9 +366,8 @@ app = boot_app()
 
 from vla_sim.actions import PoseTrajectoryPlayer, compute_action_from_ee_poses
 from vla_sim.config import PLACE_POSITIONS, TARGETS
-#from vla_sim.data_collector import EpisodeBuffer, append_episode_h5
-from vla_sim.planning import build_pick_place_trajectory, detect_success
-from vla_sim.runtime import RuntimeOptions#, SimulationRuntime
+from vla_sim.pick_place import build_pick_place_trajectory, detect_success
+from vla_sim.simulation import RuntimeOptions#, SimulationRuntime
 
 ##### MODIFIED #################################################
 from vla_sim.multiview.data_collector_multiview import (
@@ -376,7 +375,7 @@ from vla_sim.multiview.data_collector_multiview import (
     append_episode_h5_multiview,
 )
 from vla_sim.multiview.runtime_multiview import MultiviewSimulationRuntime
-from vla_sim.data_collector import VideoRecorder
+from vla_sim.h5_dataset import VideoRecorder
 
 _extra.add_argument("--save-video", action="store_true")
 _extra.add_argument("--video-fps", type=float, default=5.0)
@@ -390,7 +389,7 @@ def save_episode_videos(
 ) -> None:
     """Dump the already-buffered frames of a successful episode to mp4.
 
-    Reuses vla_sim.data_collector.VideoRecorder as-is; frames are already
+    Reuses vla_sim.h5_dataset.VideoRecorder as-is; frames are already
     sitting in memory in `buffer` by the time an episode is known to have
     succeeded, so no realtime/streaming write during the sim loop is needed.
     """

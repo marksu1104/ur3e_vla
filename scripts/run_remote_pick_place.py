@@ -79,10 +79,10 @@ from vla_sim.config import (
     TARGETS,
     TASK_INDEX_MAP,
 )
-from vla_sim.bridge import BridgeServer
-from vla_sim.planning import build_pick_place_trajectory, detect_success
-from vla_sim.visibility import goal_visibility_report, object_visibility_report
-from vla_sim.runtime import (
+from vla_sim.remote_bridge import BridgeServer
+from vla_sim.pick_place import build_pick_place_trajectory, detect_success
+from vla_sim.yolo_checks import goal_visibility_report, object_visibility_report
+from vla_sim.simulation import (
     RuntimeOptions,
     SimulationRuntime,
     as_torch,
