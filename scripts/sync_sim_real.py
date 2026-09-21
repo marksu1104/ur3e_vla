@@ -67,12 +67,11 @@ from vla_sim.config import (
 from vla_sim.simulation import RuntimeOptions, SimulationRuntime, as_torch
 from vla_sim.sim_real_sync import (
     JointSyncBackend,
-    LatestJointState,
-    ROSJointStateSubscriber,
     SUPPORTED_TASK_PAIR,
     SyncOptions,
     run_sim_to_real,
 )
+from vla_sim.ur3e_ros import LatestJointState, ROSJointStateSubscriber
 from vla_sim.yolo_checks import object_visibility_report
 
 

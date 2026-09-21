@@ -10,14 +10,11 @@ from __future__ import annotations
 import math
 import time
 from dataclasses import dataclass
-from time import monotonic
-from typing import Iterable
 
 import numpy as np
 
 from vla_sim.actions import clamp_action, compute_action_from_ee_poses
 from vla_sim.config import (
-    ARM_JOINT_NAMES,
     EE_ORIENT_DOWN,
     HOME_POS,
     PLACE_POSITIONS,
@@ -26,6 +23,7 @@ from vla_sim.config import (
 )
 from vla_sim.pick_place import build_pick_place_trajectory
 from vla_sim.simulation import ExternalStateBackend, pose_wxyz_from_sim
+from vla_sim.ur3e_ros import LatestJointState
 
 
 SUPPORTED_TASK_PAIR = (1, 2)
@@ -47,128 +45,6 @@ class SyncOptions:
     grasp_z_offset: float
     place_z_offset: float
     compensate_frame_offset: bool
-
-
-@dataclass(frozen=True)
-class JointStateSnapshot:
-    """One mapped state with a clear live/HOLD decision."""
-
-    positions: tuple[float, ...] | None
-    received_at: float | None
-    age_seconds: float | None
-    state: str
-    detail: str
-
-    @property
-    def is_live(self) -> bool:
-        return self.state == "live"
-
-
-class LatestJointState:
-    """Map named JointState samples and retain only the latest valid sample."""
-
-    def __init__(
-        self,
-        joint_names: tuple[str, ...] = ARM_JOINT_NAMES,
-        *,
-        stale_timeout: float = 0.5,
-    ):
-        if stale_timeout <= 0.0:
-            raise ValueError("stale_timeout must be positive")
-        self.joint_names = tuple(joint_names)
-        self.stale_timeout = float(stale_timeout)
-        self._positions: tuple[float, ...] | None = None
-        self._received_at: float | None = None
-        self._last_error = "awaiting_joint_state"
-
-    def update(
-        self,
-        names: Iterable[str],
-        positions: Iterable[float],
-        *,
-        received_at: float | None = None,
-    ) -> bool:
-        names = tuple(str(name) for name in names)
-        positions = tuple(float(position) for position in positions)
-        if len(names) != len(positions):
-            self._last_error = "name_position_length_mismatch"
-            return False
-        if len(set(names)) != len(names):
-            self._last_error = "duplicate_joint_name"
-            return False
-        by_name = dict(zip(names, positions, strict=True))
-        missing = [name for name in self.joint_names if name not in by_name]
-        if missing:
-            self._last_error = f"missing_joint:{','.join(missing)}"
-            return False
-        mapped = tuple(by_name[name] for name in self.joint_names)
-        if not all(math.isfinite(position) for position in mapped):
-            self._last_error = "nonfinite_joint_position"
-            return False
-        self._positions = mapped
-        self._received_at = monotonic() if received_at is None else float(received_at)
-        self._last_error = ""
-        return True
-
-    def snapshot(self, *, now: float | None = None) -> JointStateSnapshot:
-        if self._positions is None or self._received_at is None:
-            return JointStateSnapshot(
-                positions=None,
-                received_at=None,
-                age_seconds=None,
-                state="hold",
-                detail=self._last_error,
-            )
-        current = monotonic() if now is None else float(now)
-        age = max(0.0, current - self._received_at)
-        if age > self.stale_timeout:
-            return JointStateSnapshot(
-                positions=self._positions,
-                received_at=self._received_at,
-                age_seconds=age,
-                state="hold",
-                detail="stale_joint_state",
-            )
-        return JointStateSnapshot(
-            positions=self._positions,
-            received_at=self._received_at,
-            age_seconds=age,
-            state="live",
-            detail="",
-        )
-
-
-class ROSJointStateSubscriber:
-    """Keep only the newest ROS JointState; this class never publishes."""
-
-    def __init__(self, topic: str, latest: LatestJointState):
-        import rclpy
-        from rclpy.node import Node
-        from rclpy.qos import HistoryPolicy, QoSProfile, QoSReliabilityPolicy
-        from sensor_msgs.msg import JointState
-
-        self._rclpy = rclpy
-        self._latest = latest
-        self._node = Node("ur3e_joint_sync")
-        qos = QoSProfile(
-            history=HistoryPolicy.KEEP_LAST,
-            depth=1,
-            reliability=QoSReliabilityPolicy.BEST_EFFORT,
-        )
-        self._node.create_subscription(JointState, topic, self._on_joint_state, qos)
-
-    @property
-    def node(self):
-        return self._node
-
-    def _on_joint_state(self, message) -> None:
-        self._latest.update(message.name, message.position)
-
-    def spin_once(self) -> None:
-        self._rclpy.spin_once(self._node, timeout_sec=0.0)
-
-    def close(self) -> None:
-        self._node.destroy_node()
 
 
 class JointSyncBackend(ExternalStateBackend):

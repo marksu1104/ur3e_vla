@@ -1,4 +1,4 @@
-"""ROS publishers/clients for commanding the real UR3e, used by sim-to-real.
+"""ROS input and explicitly gated command output for the real UR3e.
 
 Deliberately mirrors what ``scripts/real_vla_servo.py`` already does on real
 hardware -- ``TwistStamped`` to MoveIt Servo, ``ur_msgs/SetIO`` for the
@@ -6,12 +6,130 @@ gripper -- so a scripted trajectory exercises the exact same delivery path a
 VLA policy uses, rather than a parallel one that could succeed or fail
 differently.
 
-Unlike the read-only joint input in ``vla_sim.sim_real_sync``, this module
-*does* publish. Nothing here is constructed unless sim-to-real is selected,
-and every command remains gated by ``motion_enabled``.
+``LatestJointState`` and ``ROSJointStateSubscriber`` are read-only and safe to
+use in real-to-sim mode. ``RealArmCommander`` is the only publisher here;
+nothing creates it unless sim-to-real is selected, and every command remains
+gated by ``motion_enabled``.
 """
 
 from __future__ import annotations
+
+import math
+from dataclasses import dataclass
+from time import monotonic
+from typing import Iterable
+
+from vla_sim.config import ARM_JOINT_NAMES
+
+
+@dataclass(frozen=True)
+class JointStateSnapshot:
+    """One mapped arm state with an explicit live/HOLD decision."""
+
+    positions: tuple[float, ...] | None
+    received_at: float | None
+    age_seconds: float | None
+    state: str
+    detail: str
+
+    @property
+    def is_live(self) -> bool:
+        return self.state == "live"
+
+
+class LatestJointState:
+    """Map named JointState samples and retain only the latest valid sample."""
+
+    def __init__(
+        self,
+        joint_names: tuple[str, ...] = ARM_JOINT_NAMES,
+        *,
+        stale_timeout: float = 0.5,
+    ):
+        if stale_timeout <= 0.0:
+            raise ValueError("stale_timeout must be positive")
+        self.joint_names = tuple(joint_names)
+        self.stale_timeout = float(stale_timeout)
+        self._positions: tuple[float, ...] | None = None
+        self._received_at: float | None = None
+        self._last_error = "awaiting_joint_state"
+
+    def update(
+        self,
+        names: Iterable[str],
+        positions: Iterable[float],
+        *,
+        received_at: float | None = None,
+    ) -> bool:
+        names = tuple(str(name) for name in names)
+        positions = tuple(float(position) for position in positions)
+        if len(names) != len(positions):
+            self._last_error = "name_position_length_mismatch"
+            return False
+        if len(set(names)) != len(names):
+            self._last_error = "duplicate_joint_name"
+            return False
+        by_name = dict(zip(names, positions, strict=True))
+        missing = [name for name in self.joint_names if name not in by_name]
+        if missing:
+            self._last_error = f"missing_joint:{','.join(missing)}"
+            return False
+        mapped = tuple(by_name[name] for name in self.joint_names)
+        if not all(math.isfinite(position) for position in mapped):
+            self._last_error = "nonfinite_joint_position"
+            return False
+        self._positions = mapped
+        self._received_at = monotonic() if received_at is None else float(received_at)
+        self._last_error = ""
+        return True
+
+    def snapshot(self, *, now: float | None = None) -> JointStateSnapshot:
+        if self._positions is None or self._received_at is None:
+            return JointStateSnapshot(None, None, None, "hold", self._last_error)
+        current = monotonic() if now is None else float(now)
+        age = max(0.0, current - self._received_at)
+        if age > self.stale_timeout:
+            return JointStateSnapshot(
+                self._positions,
+                self._received_at,
+                age,
+                "hold",
+                "stale_joint_state",
+            )
+        return JointStateSnapshot(self._positions, self._received_at, age, "live", "")
+
+
+class ROSJointStateSubscriber:
+    """Keep only the newest ROS JointState; this class never publishes."""
+
+    def __init__(self, topic: str, latest: LatestJointState):
+        import rclpy
+        from rclpy.node import Node
+        from rclpy.qos import HistoryPolicy, QoSProfile, QoSReliabilityPolicy
+        from sensor_msgs.msg import JointState
+
+        self._rclpy = rclpy
+        self._latest = latest
+        self._node = Node("ur3e_joint_sync")
+        qos = QoSProfile(
+            history=HistoryPolicy.KEEP_LAST,
+            depth=1,
+            reliability=QoSReliabilityPolicy.BEST_EFFORT,
+        )
+        self._node.create_subscription(JointState, topic, self._on_joint_state, qos)
+
+    @property
+    def node(self):
+        return self._node
+
+    def _on_joint_state(self, message) -> None:
+        self._latest.update(message.name, message.position)
+
+    def spin_once(self) -> None:
+        self._rclpy.spin_once(self._node, timeout_sec=0.0)
+
+    def close(self) -> None:
+        self._node.destroy_node()
 
 
 class RealArmCommander:
