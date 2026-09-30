@@ -32,7 +32,8 @@ from vla_sim.isaac_app import args_cli, boot_app, close_app, log
 
 boot_app()
 
-from vla_sim.actions import PoseTrajectoryPlayer, compute_action_from_ee_poses
+from vla_sim.actions import compute_action_from_ee_poses
+from vla_sim.collection import RECORD_EVERY_N_STEPS, prepare_scripted_episode
 from vla_sim.config import PLACE_POSITIONS, TARGETS, TARGET_KEYS
 from vla_sim.h5_dataset import VideoRecorder
 from vla_sim.multiview.data_collector_multiview import (
@@ -40,12 +41,11 @@ from vla_sim.multiview.data_collector_multiview import (
     append_episode_h5_multiview,
 )
 from vla_sim.multiview.runtime_multiview import MultiviewSimulationRuntime
-from vla_sim.pick_place import build_pick_place_trajectory, detect_success
+from vla_sim.pick_place import detect_success
 from vla_sim.simulation import RuntimeOptions, as_torch, pose_wxyz_from_sim
 
 
 SCENE_PROFILE = "multiview_scene_v1"
-RECORD_EVERY_N_STEPS = 12  # 60 Hz simulation / 12 = 5 Hz policy data.
 GRIPPER_TIP_LOCAL_OFFSET = np.array([0.03, 0.0, 0.18], dtype=np.float32)
 
 
@@ -97,20 +97,12 @@ def run_one_episode(
     if scene is None or controller is None:
         raise RuntimeError("multiview runtime did not initialize")
 
-    runtime.reset_targets()
-    controller.reset_home()
-    for _ in range(120):
-        runtime.step()
-
-    target = scene[target_name]
+    episode = prepare_scripted_episode(runtime, target_name, place_xy)
+    target = episode.target
     scene_objects = {name: scene[name] for name in TARGET_KEYS}
-    target_resting = as_torch(target.data.root_pos_w)[0].cpu().numpy()
-    target_rot = pose_wxyz_from_sim(target.data.root_link_pose_w)[0, 3:7].cpu().numpy()
-    target_initial_z = float(target_resting[2])
-    trajectory = build_pick_place_trajectory(
-        TARGETS[target_name], target_resting, target_rot, place_xy
-    )
-    player = PoseTrajectoryPlayer(trajectory, device=runtime.device)
+    target_resting = episode.target_resting
+    target_initial_z = episode.target_initial_z
+    player = episode.player
     buffer = MultiviewEpisodeBuffer()
 
     previous_pos = None

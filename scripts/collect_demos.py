@@ -15,7 +15,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 _extra = argparse.ArgumentParser(add_help=False, allow_abbrev=False)
 _extra.add_argument("--episodes", type=int, default=5)
-_extra.add_argument("--output-dir", default="outputs/h5/canonical_scene")
+_extra.add_argument("--output-dir", default="outputs/h5/pick_place_v1")
 _extra.add_argument("--max-episodes-tried", type=int, default=0)
 _extra.add_argument("--seed", type=int, default=42)
 _extra.add_argument("--overwrite", action="store_true")
@@ -30,10 +30,11 @@ from vla_sim.isaac_app import args_cli, boot_app, close_app, log
 
 app = boot_app()
 
-from vla_sim.actions import PoseTrajectoryPlayer, compute_action_from_ee_poses
+from vla_sim.actions import compute_action_from_ee_poses
+from vla_sim.collection import RECORD_EVERY_N_STEPS, prepare_scripted_episode
 from vla_sim.config import PLACE_POSITIONS, TARGETS
 from vla_sim.h5_dataset import EpisodeBuffer, append_episode_h5
-from vla_sim.pick_place import build_pick_place_trajectory, detect_success
+from vla_sim.pick_place import detect_success
 from vla_sim.simulation import (
     RuntimeOptions,
     SimulationRuntime,
@@ -43,9 +44,6 @@ from vla_sim.simulation import (
 
 
 SCENE_PROFILE = "canonical_scene_v1"
-RECORD_EVERY_N_STEPS = 12  # 60 Hz simulation / 12 = 5 Hz policy data.
-
-
 def _rgb(scene, camera_name: str) -> np.ndarray:
     return as_torch(scene[camera_name].data.output["rgb"])[0].cpu().numpy().astype(np.uint8)
 
@@ -62,19 +60,11 @@ def run_one_episode(
     if scene is None or controller is None:
         raise RuntimeError("canonical runtime did not initialize")
 
-    runtime.reset_targets()
-    controller.reset_home()
-    for _ in range(120):
-        runtime.step()
-
-    target = scene[target_name]
-    target_resting = as_torch(target.data.root_pos_w)[0].cpu().numpy()
-    target_rot = pose_wxyz_from_sim(target.data.root_link_pose_w)[0, 3:7].cpu().numpy()
-    target_initial_z = float(target_resting[2])
-    trajectory = build_pick_place_trajectory(
-        TARGETS[target_name], target_resting, target_rot, place_xy
-    )
-    player = PoseTrajectoryPlayer(trajectory, device=runtime.device)
+    episode = prepare_scripted_episode(runtime, target_name, place_xy)
+    target = episode.target
+    target_resting = episode.target_resting
+    target_initial_z = episode.target_initial_z
+    player = episode.player
     buffer = EpisodeBuffer()
 
     previous_pos = None

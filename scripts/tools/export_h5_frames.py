@@ -7,16 +7,16 @@ export_h5_frames.py
 
 執行範例：
   # 匯出所有 demo 的圖片
-  python scripts/tools/export_h5_frames.py --h5 ./outputs/h5/mugs_5/red_mug/demos.h5
+  python scripts/tools/export_h5_frames.py --h5 ./outputs/h5/pick_place_v1/red_mug/demos.h5
 
   # 只匯出 demo_0，每 5 幀一張
-  python scripts/tools/export_h5_frames.py --h5 ./outputs/h5/mugs_5/red_mug/demos.h5 --demos demo_0 --every-n 5
+  python scripts/tools/export_h5_frames.py --h5 ./outputs/h5/pick_place_v1/red_mug/demos.h5 --demos demo_0 --every-n 5
 
   # 同時輸出影片
-  python scripts/tools/export_h5_frames.py --h5 ./outputs/h5/mugs_5/red_mug/demos.h5 --video
+  python scripts/tools/export_h5_frames.py --h5 ./outputs/h5/pick_place_v1/red_mug/demos.h5 --video
 
   # 指定輸出目錄
-  python scripts/tools/export_h5_frames.py --h5 ./outputs/h5/mugs_5/red_mug/demos.h5 --out-dir ./my_export
+  python scripts/tools/export_h5_frames.py --h5 ./outputs/h5/pick_place_v1/red_mug/demos.h5 --out-dir ./outputs/test/h5_export
 """
 
 import argparse
@@ -144,7 +144,7 @@ def main():
                         help="每 N 幀輸出一張圖（預設 1 = 全部）")
     parser.add_argument("--video",   action="store_true", help="同時輸出 mp4 影片")
     parser.add_argument("--fps",     type=int, default=10, help="影片 fps（預設 10）")
-    parser.add_argument("--out-dir", default="./export",  help="輸出根目錄")
+    parser.add_argument("--out-dir", default="./outputs/test/h5_export", help="輸出根目錄")
     args = parser.parse_args()
 
     out_dir = Path(args.out_dir)
