@@ -72,6 +72,7 @@ from vla_sim.config import (
     EE_BODY_NAME,
     GRIPPER_CLOSE,
     GRIPPER_OPEN,
+    HOME_POS,
     HOME_Q,
     PHYSICS_DT,
     PLACE_POSITIONS,
@@ -224,8 +225,15 @@ def _setup_batch(scene, sim, robot, sim_dt, target_name, target_info, arm_ids_t,
             float(place_local[0] + origins_np[env_id, 0]),
             float(place_local[1] + origins_np[env_id, 1]),
         )
+        home_world = tuple(
+            float(HOME_POS[axis] + origins_np[env_id, axis]) for axis in range(3)
+        )
         trajectory = build_pick_place_trajectory(
-            target_info, target_resting[env_id], target_rotations[env_id], place_world
+            target_info,
+            target_resting[env_id],
+            target_rotations[env_id],
+            place_world,
+            home_pos=home_world,
         )
         players.append(PoseTrajectoryPlayer(trajectory, device=device))
         traj_meta.append(

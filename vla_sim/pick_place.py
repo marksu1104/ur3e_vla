@@ -87,6 +87,7 @@ def build_pick_place_trajectory(
     place_yaw_offset: float = 0.0,
     object_place_xy: tuple[float, float] | None = None,
     place_nudge_scale: float = 1.0,
+    home_pos: tuple[float, float, float] = HOME_POS,
 ) -> list[tuple]:
     """Build the no-dwell canonical path with logical 0..1 gripper commands.
 
@@ -98,6 +99,7 @@ def build_pick_place_trajectory(
     center, rather than the gripper, lands at that XY coordinate. Defaults
     preserve the canonical simulated trajectory and existing H5/RLDS data.
     ``place_nudge_scale`` accounts for partial slip after the physical grasp.
+    ``home_pos`` lets cloned environments use their own world-space home pose.
 
     They exist because the simulated depths are tuned against the simulated
     gripper and object meshes, while the real cell needs shallower descents:
@@ -164,8 +166,8 @@ def build_pick_place_trajectory(
     carry = (place_ee_x, place_ee_y, carry_z)
 
     return [
-        (0.0, HOME_POS, EE_ORIENT_DOWN, GRIPPER_OPEN),
-        (move_duration(HOME_POS, hover), hover, grasp_quat, GRIPPER_OPEN),
+        (0.0, home_pos, EE_ORIENT_DOWN, GRIPPER_OPEN),
+        (move_duration(home_pos, hover), hover, grasp_quat, GRIPPER_OPEN),
         (move_duration(hover, pre_grasp), pre_grasp, grasp_quat, GRIPPER_OPEN),
         (move_duration(pre_grasp, grasp), grasp, grasp_quat, GRIPPER_OPEN),
         (gripper_duration, grasp, grasp_quat, GRIPPER_CLOSED),
@@ -174,7 +176,7 @@ def build_pick_place_trajectory(
         (move_duration(carry, place_down), place_down, place_quat, GRIPPER_CLOSED),
         (gripper_duration, place_down, place_quat, GRIPPER_OPEN),
         (move_duration(place_down, carry), carry, place_quat, GRIPPER_OPEN),
-        (move_duration(carry, HOME_POS), HOME_POS, EE_ORIENT_DOWN, GRIPPER_OPEN),
+        (move_duration(carry, home_pos), home_pos, EE_ORIENT_DOWN, GRIPPER_OPEN),
     ]
 
 
