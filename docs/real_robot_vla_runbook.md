@@ -121,14 +121,19 @@ moveit_servo.command_out_type: std_msgs/Float64MultiArray
 
 ## Terminal E: VLA Server
 
-Use the currently best mug model. For example, the 500-demo model:
+Use a model that was trained and separately validated for this real-robot
+workflow. The path below is only an example; do not run this test until the
+model and its `dataset_statistics.json` exist and pass the simulation checks.
 
 ```bash
 conda activate openvla
 cd ~/IsaacLab/ur3e_vla
 
+MODEL_PATH=/srv/isaac_ros2/models/pick_place_v1
+ls "$MODEL_PATH/dataset_statistics.json"
+
 python scripts/vla_server.py \
-  --model-path ~/IsaacLab/ur3e_vla/outputs/models/ur3e_vla_mugs_500 \
+  --model-path "$MODEL_PATH" \
   --unnorm-key ur3e_vla_dataset \
   --host 0.0.0.0 \
   --port 8000

@@ -1,0 +1,108 @@
+diff --git a/prismatic/vla/datasets/rlds/oxe/configs.py b/prismatic/vla/datasets/rlds/oxe/configs.py
+index 2b8dcb9..a2a851a 100644
+--- a/prismatic/vla/datasets/rlds/oxe/configs.py
++++ b/prismatic/vla/datasets/rlds/oxe/configs.py
+@@ -670,4 +670,11 @@ OXE_DATASET_CONFIGS = {
+         "state_encoding": StateEncoding.POS_EULER,
+         "action_encoding": ActionEncoding.EEF_POS,
+     },
++    "ur3e_vla_dataset": {
++        "image_obs_keys": {"primary": "image", "secondary": None, "wrist": "hand_image"},
++        "depth_obs_keys": {"primary": None, "secondary": None, "wrist": None},
++        "state_obs_keys": ["state"],
++        "state_encoding": StateEncoding.POS_QUAT,
++        "action_encoding": ActionEncoding.EEF_POS,
++    },
+ }
+diff --git a/prismatic/vla/datasets/rlds/oxe/mixtures.py b/prismatic/vla/datasets/rlds/oxe/mixtures.py
+index aca03da..0432adc 100644
+--- a/prismatic/vla/datasets/rlds/oxe/mixtures.py
++++ b/prismatic/vla/datasets/rlds/oxe/mixtures.py
+@@ -9,6 +9,7 @@ from typing import Dict, List, Tuple
+ 
+ # fmt: off
+ OXE_NAMED_MIXTURES: Dict[str, List[Tuple[str, float]]] = {
++    "ur3e_vla_dataset": [("ur3e_vla_dataset", 1.0)],
+     # === Bridge V2 Dataset ===
+     "bridge": [
+         # ("bridge_oxe", 1.0),                                    # Version of Bridge V2 in Open-X GCP Bucket
+diff --git a/prismatic/vla/datasets/rlds/oxe/transforms.py b/prismatic/vla/datasets/rlds/oxe/transforms.py
+index cc9c687..0d5db7b 100644
+--- a/prismatic/vla/datasets/rlds/oxe/transforms.py
++++ b/prismatic/vla/datasets/rlds/oxe/transforms.py
+@@ -28,6 +28,13 @@ from prismatic.vla.datasets.rlds.utils.data_utils import (
+ )
+ 
+ 
++def ur3e_vla_dataset_transform(trajectory: Dict[str, Any]) -> Dict[str, Any]:
++    """Adapt project state and terminal action flag for OpenVLA."""
++    trajectory["observation"]["state"] = trajectory["observation"]["state"][:, 6:14]
++    trajectory["action"] = tf.cast(trajectory["action"][:, :-1], tf.float32)
++    return trajectory
++
++
+ def bridge_oxe_dataset_transform(trajectory: Dict[str, Any]) -> Dict[str, Any]:
+     """
+     Applies to version of Bridge V2 in Open X-Embodiment mixture.
+@@ -919,4 +926,5 @@ OXE_STANDARDIZATION_TRANSFORMS = {
+     "libero_object_no_noops": libero_dataset_transform,
+     "libero_goal_no_noops": libero_dataset_transform,
+     "libero_10_no_noops": libero_dataset_transform,
++    "ur3e_vla_dataset": ur3e_vla_dataset_transform,
+ }
+diff --git a/vla-scripts/finetune.py b/vla-scripts/finetune.py
+index ec51a6b..4543a2b 100644
+--- a/vla-scripts/finetune.py
++++ b/vla-scripts/finetune.py
+@@ -82,6 +82,7 @@ class FinetuneConfig:
+     dataset_name: str = "droid_wipe"                                # Name of fine-tuning dataset (e.g., `droid_wipe`)
+     run_root_dir: Path = Path("runs")                               # Path to directory to store logs & checkpoints
+     adapter_tmp_dir: Path = Path("adapter-tmp")                     # Temporary directory for LoRA weights before fusing
++    final_model_dir: Optional[Path] = None                           # Optional final fused model directory for inference
+ 
+     # Fine-tuning Parameters
+     batch_size: int = 16                                            # Fine-tuning batch size
+@@ -137,7 +138,9 @@ def finetune(cfg: FinetuneConfig) -> None:
+ 
+     # Start =>> Build Directories
+     run_dir, adapter_dir = cfg.run_root_dir / exp_id, cfg.adapter_tmp_dir / exp_id
++    model_dir = cfg.final_model_dir if cfg.final_model_dir is not None else run_dir
+     os.makedirs(run_dir, exist_ok=True)
++    os.makedirs(model_dir, exist_ok=True)
+ 
+     # Quantization Config =>> only if LoRA fine-tuning
+     quantization_config = None
+@@ -224,6 +227,8 @@ def finetune(cfg: FinetuneConfig) -> None:
+     # [Important] Save Dataset Statistics =>> used to de-normalize actions for inference!
+     if distributed_state.is_main_process:
+         save_dataset_statistics(vla_dataset.dataset_statistics, run_dir)
++        if model_dir != run_dir:
++            save_dataset_statistics(vla_dataset.dataset_statistics, model_dir)
+ 
+     # Create Collator and DataLoader
+     collator = PaddedCollatorForActionPrediction(
+@@ -323,10 +328,10 @@ def finetune(cfg: FinetuneConfig) -> None:
+                     print(f"Saving Model Checkpoint for Step {gradient_step_idx}")
+ 
+                     # If LoRA, we first save adapter weights, then merge into full model; otherwise, default save!
+-                    save_dir = adapter_dir if cfg.use_lora else run_dir
++                    save_dir = adapter_dir if cfg.use_lora else model_dir
+ 
+                     # Save Processor & Weights
+-                    processor.save_pretrained(run_dir)
++                    processor.save_pretrained(model_dir)
+                     vla.module.save_pretrained(save_dir)
+ 
+                 # Wait for processor and adapter weights to be saved by main process
+@@ -343,9 +348,9 @@ def finetune(cfg: FinetuneConfig) -> None:
+                     if distributed_state.is_main_process:
+                         if cfg.save_latest_checkpoint_only:
+                             # Overwrite latest checkpoint
+-                            merged_vla.save_pretrained(run_dir)
++                            merged_vla.save_pretrained(model_dir)
+ 
+-                            print(f"Saved Model Checkpoint for Step {gradient_step_idx} at: {run_dir}")
++                            print(f"Saved Model Checkpoint for Step {gradient_step_idx} at: {model_dir}")
+                         else:
+                             # Prepare to save checkpoint in new directory
+                             checkpoint_dir = Path(str(run_dir) + f"--{gradient_step_idx}_chkpt")

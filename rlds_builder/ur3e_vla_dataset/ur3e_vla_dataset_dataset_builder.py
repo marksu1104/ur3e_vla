@@ -209,18 +209,10 @@ class Ur3eVlaDataset(tfds.core.GeneratorBasedBuilder):
         elif os.environ.get("UR3E_VLA_H5_PATH"):
             h5_paths = [Path(os.environ["UR3E_VLA_H5_PATH"]).expanduser()]
         else:
-            builder_dir = Path(__file__).resolve().parent
-            h5_paths = [
-                (
-                    builder_dir
-                    / ".."
-                    / ".."
-                    / "outputs"
-                    / "data"
-                    / "mug"
-                    / "demos.h5"
-                ).resolve()
-            ]
+            raise ValueError(
+                "Set UR3E_VLA_H5_PATH or UR3E_VLA_H5_PATHS explicitly; "
+                "there is no implicit dataset input."
+            )
 
         if not h5_paths:
             raise ValueError("UR3E_VLA_H5_PATHS did not contain any paths.")

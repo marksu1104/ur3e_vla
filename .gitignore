@@ -16,3 +16,7 @@ venv/
 backups/
 
 .vscode/
+
+# Local workstation administration notes and installer.
+docs/shared_environment.md
+scripts/tools/setup_shared_workstation.sh

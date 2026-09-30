@@ -27,10 +27,13 @@ Remote Isaac 127.0.0.1:8100
 
 以下方式適用於任何有 OpenSSH client 的終端，不限定作業系統或 shell。
 
-先在本地終端建立 SSH tunnel 並登入遠端：
+先在本地終端設定工作站的 SSH 帳號、主機與連接埠，建立 tunnel 並登入遠端：
 
-~~~console
-ssh -tt -o ExitOnForwardFailure=yes -o ServerAliveInterval=15 -o ServerAliveCountMax=3 -L 127.0.0.1:18100:127.0.0.1:8100 -p 6002 acolab@140.112.42.35
+~~~bash
+REMOTE_USER=your_user
+REMOTE_HOST=your_host
+SSH_PORT=your_ssh_port
+ssh -tt -o ExitOnForwardFailure=yes -o ServerAliveInterval=15 -o ServerAliveCountMax=3 -L 127.0.0.1:18100:127.0.0.1:8100 -p "$SSH_PORT" "$REMOTE_USER@$REMOTE_HOST"
 ~~~
 
 登入遠端後，在同一個 SSH session 執行：

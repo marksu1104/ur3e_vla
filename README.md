@@ -123,8 +123,7 @@ isaaclab scripts/collect_demos.py \
   --headless --enable_cameras \
   --target red_mug \
   --episodes 500 --max-episodes-tried 700 \
-  --output-dir ~/IsaacLab/ur3e_vla/outputs/h5/canonical_scene_red_mug \
-  --overwrite
+  --output-dir outputs/h5/pick_place_v1
 ```
 
 Run VLA against the canonical scene. `camera_policy` is the only policy camera.
@@ -157,6 +156,17 @@ verification checklist is in
 [docs/full_test_commands.md](docs/full_test_commands.md).
 The currently supported sim-to-real task and reset procedure are documented in
 [docs/sim_real_sync.md](docs/sim_real_sync.md).
+
+## OpenVLA Training Boundary
+
+This repository owns H5 collection, the H5-to-TFDS builder, the Isaac rollout,
+and the HTTP inference interface. OpenVLA's source checkout, Python environment,
+base weights, and exported model are separate. A small, version-pinned
+[integration patch](scripts/tools/openvla_ur3e.patch) teaches that external
+checkout the UR3e RLDS fields and action format. It does not install or vendor
+OpenVLA. Apply it before fine-tuning, following the ordered commands in
+[docs/command_reference.md](docs/command_reference.md). The tested one-step
+fine-tune verifies the data and inference path; it is not a trained task policy.
 
 ## 3D-Printable Scene Parts
 
