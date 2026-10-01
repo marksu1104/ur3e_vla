@@ -22,6 +22,23 @@ class EpisodeBuffer:
 def build_episode_arrays(buffer: EpisodeBuffer, instruction: str) -> dict:
     """Convert an episode buffer into fixed arrays for HDF5 storage."""
     num_steps = len(buffer.ee_poses)
+    if num_steps == 0:
+        raise ValueError("Cannot export an empty episode")
+    for name in (
+        "main_images", "wrist_images", "joint_positions",
+        "gripper_states", "actions_7d",
+    ):
+        count = len(getattr(buffer, name))
+        if count != num_steps:
+            raise ValueError(f"{name} has {count} steps; expected {num_steps}")
+
+    for name, width in (("ee_poses", 7), ("joint_positions", 6), ("actions_7d", 7)):
+        values = np.asarray(getattr(buffer, name), dtype=np.float32)
+        if values.shape != (num_steps, width):
+            raise ValueError(f"{name} must have shape ({num_steps}, {width})")
+        if not np.isfinite(values).all():
+            raise ValueError(f"{name} contains non-finite values")
+
     raw_actions = [
         np.asarray(action, dtype=np.float32) for action in buffer.actions_7d
     ]
@@ -89,6 +106,10 @@ def append_episode_h5(h5_path: Path, episode_id: int, buffer: EpisodeBuffer, met
     group_name = f"demo_{episode_id}"
 
     with h5py.File(h5_path, "a") as h5_file:
+        if f"data/{group_name}" in h5_file:
+            raise FileExistsError(
+                f"{h5_path} already contains {group_name}; existing episodes cannot be replaced"
+            )
         scene_profile = str(meta.get("scene_profile", ""))
         if scene_profile:
             existing_profile = h5_file.attrs.get("scene_profile")
@@ -104,8 +125,6 @@ def append_episode_h5(h5_path: Path, episode_id: int, buffer: EpisodeBuffer, met
         )
 
         data_group = h5_file.require_group("data")
-        if group_name in data_group:
-            del data_group[group_name]
         group = data_group.create_group(group_name)
         other_group = group.create_group("other")
 

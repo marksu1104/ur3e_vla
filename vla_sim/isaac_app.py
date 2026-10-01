@@ -8,6 +8,7 @@ project can stay focused on scene setup and control logic.
 import argparse
 import os
 import sys
+import traceback
 from pathlib import Path
 
 from isaaclab.app import AppLauncher
@@ -111,12 +112,19 @@ def boot_app():
 
 
 def close_app():
-    """Close the shared SimulationApp once."""
+    """Close once, preserving an active exception through Kit fast shutdown."""
     global _app_closed
     if _app is None or _app_closed:
         return
     _app_closed = True
-    try:
-        _app.close(wait_for_replicator=False)
-    except TypeError:
-        _app.close()
+    exc_type, exc, exc_tb = sys.exc_info()
+    if isinstance(exc, SystemExit):
+        exit_code = exc.code if isinstance(exc.code, int) else int(exc.code is not None)
+    elif isinstance(exc, KeyboardInterrupt):
+        exit_code = 130
+    else:
+        exit_code = int(exc is not None)
+    if exit_code and exc is not None:
+        # Kit may terminate before Python prints the uncaught exception.
+        traceback.print_exception(exc_type, exc, exc_tb)
+    _app.close(wait_for_replicator=False, exit_code=exit_code)

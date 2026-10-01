@@ -8,10 +8,8 @@ is intended for short test previews only.
 """
 
 import argparse
-import os
 import sys
 import time
-import traceback
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -41,6 +39,16 @@ _parser.add_argument(
 )
 _extra_args, _ = _parser.parse_known_args()
 
+if _extra_args.episodes < 1 or _extra_args.num_envs < 1:
+    _parser.error("--episodes and --num-envs must be at least 1")
+if _extra_args.max_episodes_tried < 0:
+    _parser.error("--max-episodes-tried must be nonnegative (0 selects the default)")
+if _extra_args.record_video:
+    if not -1 <= _extra_args.video_env < _extra_args.num_envs:
+        _parser.error("--video-env must be -1 or a valid environment index")
+    if _extra_args.video_fps <= 0 or _extra_args.video_every_n_steps < 1:
+        _parser.error("--video-fps must be positive and --video-every-n-steps at least 1")
+
 if not _extra_args.show_gui and "--headless" not in sys.argv:
     sys.argv.append("--headless")
 
@@ -67,8 +75,6 @@ from vla_sim.config import (
     BACKDROP_BACK_SIZE,
     BACKDROP_SIDE_POS,
     BACKDROP_SIDE_SIZE,
-    CAMERA_HEIGHT,
-    CAMERA_WIDTH,
     EE_BODY_NAME,
     GRIPPER_CLOSE,
     GRIPPER_OPEN,
@@ -84,8 +90,6 @@ from vla_sim.config import (
     TABLE_MAT_B_POS,
     TABLE_MAT_SIZE,
     TARGETS,
-    WRIST_CAMERA_HEIGHT,
-    WRIST_CAMERA_WIDTH,
 )
 from vla_sim.h5_dataset import EpisodeBuffer, VideoRecorder, append_episode_h5
 from vla_sim.pick_place import (
@@ -319,15 +323,12 @@ def _run_batch(sim, scene, robot, ik, sim_dt, arm_ids_t, finger_ids_t, ee_body_i
         best_lift = np.maximum(best_lift, obj_pos[:, 2] - target_initial_z)
 
         if video_recorder is not None and step % max(1, video_every_n_steps) == 0:
-            try:
-                rgb_all = as_torch(scene[video_camera].data.output["rgb"]).detach().cpu().numpy().astype(np.uint8)
-                if video_env < 0:
-                    video_rgb = _tile_env_rgb(rgb_all)
-                else:
-                    video_rgb = rgb_all[video_env, ..., :3]
-                video_recorder.write_rgb(video_rgb[..., :3])
-            except Exception as exc:
-                log(f"video frame failed: {exc}")
+            rgb_all = as_torch(scene[video_camera].data.output["rgb"]).detach().cpu().numpy().astype(np.uint8)
+            if video_env < 0:
+                video_rgb = _tile_env_rgb(rgb_all)
+            else:
+                video_rgb = rgb_all[video_env, ..., :3]
+            video_recorder.write_rgb(video_rgb[..., :3])
 
         if step % record_every == 0:
             ee_pose_now_all = (
@@ -342,15 +343,8 @@ def _run_batch(sim, scene, robot, ik, sim_dt, arm_ids_t, finger_ids_t, ee_body_i
                 .cpu()
                 .numpy()
             )
-            try:
-                main_rgb_all = as_torch(scene["camera_policy"].data.output["rgb"]).detach().cpu().numpy().astype(np.uint8)
-            except Exception as exc:
-                log(f"camera_policy read failed: {exc}")
-                main_rgb_all = np.zeros((num_envs, CAMERA_HEIGHT, CAMERA_WIDTH, 3), dtype=np.uint8)
-            try:
-                wrist_rgb_all = as_torch(scene["camera_wrist"].data.output["rgb"]).detach().cpu().numpy().astype(np.uint8)
-            except Exception:
-                wrist_rgb_all = np.zeros((num_envs, WRIST_CAMERA_HEIGHT, WRIST_CAMERA_WIDTH, 3), dtype=np.uint8)
+            main_rgb_all = as_torch(scene["camera_policy"].data.output["rgb"]).detach().cpu().numpy().astype(np.uint8)
+            wrist_rgb_all = as_torch(scene["camera_wrist"].data.output["rgb"]).detach().cpu().numpy().astype(np.uint8)
 
             for env_id in range(num_envs):
                 ee_pose_now = ee_pose_now_all[env_id]
@@ -425,9 +419,13 @@ def main():
     if _extra_args.overwrite and h5_path.exists() and not _extra_args.no_save_h5:
         h5_path.unlink()
         log(f"Removed existing dataset: {h5_path}")
+    if h5_path.exists() and not _extra_args.no_save_h5:
+        raise FileExistsError(
+            f"Refusing to replace {h5_path}; use a new output directory or --overwrite."
+        )
 
-    num_envs = max(1, int(_extra_args.num_envs))
-    n_target = max(1, int(_extra_args.episodes))
+    num_envs = int(_extra_args.num_envs)
+    n_target = int(_extra_args.episodes)
     max_tried = _extra_args.max_episodes_tried or max(n_target * 3, n_target + 10)
 
     log("Multi-env scripted collection")
@@ -444,8 +442,6 @@ def main():
     video_path = None
     if _extra_args.record_video:
         video_env = int(_extra_args.video_env)
-        if video_env >= num_envs:
-            raise ValueError(f"--video-env must be -1 or in [0, {num_envs - 1}], got {video_env}")
         if _extra_args.video_path:
             video_path = Path(_extra_args.video_path).expanduser()
             if not video_path.is_absolute():
@@ -457,50 +453,50 @@ def main():
         video_label = "all-envs tiled" if video_env < 0 else f"env{video_env}"
         log(f"Video camera/env: {_extra_args.video_camera} / {video_label}")
 
-    sim = sim_utils.SimulationContext(
-        sim_utils.SimulationCfg(device=args_cli.device, dt=PHYSICS_DT)
-    )
-    scene = InteractiveScene(MultiEnvSceneCfg(num_envs=num_envs, env_spacing=2.0))
-    stage = omni.usd.get_context().get_stage()
-    log("Phase: sim.reset() + sim.play()")
-    sim.reset()
-    sim.play()
-    sim_dt = sim.get_physics_dt()
-    for env_id in range(num_envs):
-        env_prefix = f"/World/envs/env_{env_id}"
-        apply_target_colors(stage, TARGETS.keys(), root_prefix=env_prefix)
+    try:
+        sim = sim_utils.SimulationContext(
+            sim_utils.SimulationCfg(device=args_cli.device, dt=PHYSICS_DT)
+        )
+        scene = InteractiveScene(MultiEnvSceneCfg(num_envs=num_envs, env_spacing=2.0))
+        stage = omni.usd.get_context().get_stage()
+        log("Phase: sim.reset() + sim.play()")
+        sim.reset()
+        sim.play()
+        sim_dt = sim.get_physics_dt()
+        for env_id in range(num_envs):
+            env_prefix = f"/World/envs/env_{env_id}"
+            apply_target_colors(stage, TARGETS.keys(), root_prefix=env_prefix)
 
-    robot = scene["robot"]
-    device = str(sim.device)
-    arm_ids, _ = robot.find_joints(ARM_JOINT_NAMES)
-    arm_ids_t = torch.tensor(arm_ids, dtype=torch.int32, device=device)
-    gripper_joint_ids, _ = robot.find_joints(["finger_joint"])
-    if len(gripper_joint_ids) != 1:
-        raise RuntimeError(f"expected one finger_joint, found {gripper_joint_ids}")
-    finger_ids_t = torch.tensor(gripper_joint_ids, dtype=torch.int32, device=device)
+        robot = scene["robot"]
+        device = str(sim.device)
+        arm_ids, _ = robot.find_joints(ARM_JOINT_NAMES)
+        arm_ids_t = torch.tensor(arm_ids, dtype=torch.int32, device=device)
+        gripper_joint_ids, _ = robot.find_joints(["finger_joint"])
+        if len(gripper_joint_ids) != 1:
+            raise RuntimeError(f"expected one finger_joint, found {gripper_joint_ids}")
+        finger_ids_t = torch.tensor(gripper_joint_ids, dtype=torch.int32, device=device)
 
-    ee_ids, _ = robot.find_bodies([EE_BODY_NAME])
-    ee_body_idx = ee_ids[0]
-    ee_jac_idx = robot.body_names.index(EE_BODY_NAME) - 1
-    ik = DifferentialIKController(
-        DifferentialIKControllerCfg(command_type="pose", use_relative_mode=False, ik_method="dls"),
-        num_envs=num_envs,
-        device=device,
-    )
+        ee_ids, _ = robot.find_bodies([EE_BODY_NAME])
+        ee_body_idx = ee_ids[0]
+        ee_jac_idx = robot.body_names.index(EE_BODY_NAME) - 1
+        ik = DifferentialIKController(
+            DifferentialIKControllerCfg(command_type="pose", use_relative_mode=False, ik_method="dls"),
+            num_envs=num_envs,
+            device=device,
+        )
 
-    log(f"robot root shape  : {_shape_of(robot.data.root_pos_w)}")
-    log(f"robot joint names : {robot.data.joint_names}")
-    log(f"arm ids           : {arm_ids}")
-    log(f"gripper ids       : {gripper_joint_ids}")
+        log(f"robot root shape  : {_shape_of(robot.data.root_pos_w)}")
+        log(f"robot joint names : {robot.data.joint_names}")
+        log(f"arm ids           : {arm_ids}")
+        log(f"gripper ids       : {gripper_joint_ids}")
 
-    n_success = 0
-    n_tried = 0
-    t_start = time.monotonic()
-    while n_success < n_target and n_tried < max_tried:
-        batch_attempts = min(num_envs, max_tried - n_tried)
-        n_tried += batch_attempts
-        log(f"\n[Batch | success={n_success}/{n_target} tried={n_tried}/{max_tried}]")
-        try:
+        n_success = 0
+        n_tried = 0
+        t_start = time.monotonic()
+        while n_success < n_target and n_tried < max_tried:
+            batch_attempts = min(num_envs, max_tried - n_tried)
+            n_tried += batch_attempts
+            log(f"\n[Batch | success={n_success}/{n_target} tried={n_tried}/{max_tried}]")
             results = _run_batch(
                 sim, scene, robot, ik, sim_dt,
                 arm_ids_t, finger_ids_t,
@@ -511,66 +507,60 @@ def main():
                 video_env=int(_extra_args.video_env),
                 video_every_n_steps=int(_extra_args.video_every_n_steps),
             )
-        except Exception as exc:
-            log(f"  BATCH EXCEPTION: {type(exc).__name__}: {exc}")
-            log(traceback.format_exc())
-            continue
+            for env_id, (success, buffer, diag) in enumerate(results[:batch_attempts]):
+                if success:
+                    prefix = "SUCCESS" if n_success < n_target else "EXTRA SUCCESS ignored"
+                    log(f"  env{env_id}: {prefix} best_lift={diag['best_lift_height']:.3f} place={diag['obj_place_xy_dist']:.3f} steps={diag['num_steps_recorded']}")
+                    if n_success < n_target:
+                        meta = {
+                            "episode_id": n_success,
+                            "target": target_name,
+                            "instruction": instruction,
+                            "scene_profile": "canonical_scene_v1",
+                            "gripper_action_encoding": "logical_binary_0_open_1_closed",
+                            "record_hz": 5.0,
+                            "success": True,
+                            "num_steps": diag["num_steps_recorded"],
+                            "collection_time": time.strftime("%Y-%m-%d %H:%M:%S"),
+                            "tried_index": n_tried - batch_attempts + env_id + 1,
+                            "env_id": int(env_id),
+                        }
+                        if _extra_args.no_save_h5:
+                            log("    SAVE SKIPPED (--no-save-h5)")
+                        else:
+                            append_episode_h5(h5_path, n_success, buffer, meta)
+                        n_success += 1
+                else:
+                    log(
+                        f"  env{env_id}: FAILED  best_lift={diag.get('best_lift_height', 0):.3f} "
+                        f"place={diag.get('obj_place_xy_dist', 0):.3f} "
+                        f"ee_safe={diag.get('ee_safe')} "
+                        f"ee_grasp={diag.get('ee_to_grasp_dist_final', 0):.3f} "
+                        f"ee_obj_xy={diag.get('ee_to_obj_xy_final', 0):.3f} "
+                        f"grip={diag.get('gripper_cmd_final', 0):.3f} "
+                        f"joints={[round(x, 3) for x in diag.get('gripper_joint_pos_final', [])]} "
+                        f"lifted={diag.get('obj_lifted')} at_place={diag.get('obj_at_place')}"
+                    )
 
-        for env_id, (success, buffer, diag) in enumerate(results[:batch_attempts]):
-            if success:
-                prefix = "SUCCESS" if n_success < n_target else "EXTRA SUCCESS ignored"
-                log(f"  env{env_id}: {prefix} best_lift={diag['best_lift_height']:.3f} place={diag['obj_place_xy_dist']:.3f} steps={diag['num_steps_recorded']}")
-                if n_success < n_target:
-                    meta = {
-                        "episode_id": n_success,
-                        "target": target_name,
-                        "instruction": instruction,
-                        "scene_profile": "canonical_scene_v1",
-                        "gripper_action_encoding": "logical_binary_0_open_1_closed",
-                        "record_hz": 5.0,
-                        "success": True,
-                        "num_steps": diag["num_steps_recorded"],
-                        "collection_time": time.strftime("%Y-%m-%d %H:%M:%S"),
-                        "tried_index": n_tried - batch_attempts + env_id + 1,
-                        "env_id": int(env_id),
-                    }
-                    if _extra_args.no_save_h5:
-                        log("    SAVE SKIPPED (--no-save-h5)")
-                    else:
-                        append_episode_h5(h5_path, n_success, buffer, meta)
-                    n_success += 1
+        elapsed = time.monotonic() - t_start
+        log("=" * 60)
+        log(f"Collection done. {n_success}/{n_target} successes from {n_tried} attempts in {elapsed/60:.1f} min")
+        log(f"Success rate: {n_success}/{max(1, n_tried)} = {100*n_success/max(1,n_tried):.1f}%")
+        log(f"Output: {out_dir}")
+        if n_success != n_target:
+            raise RuntimeError(f"collected {n_success}/{n_target} successful episodes")
+    finally:
+        if video_recorder is not None:
+            video_recorder.close()
+            if video_recorder.frame_count:
+                log(f"Video saved: {video_recorder.path} ({video_recorder.frame_count} frames)")
             else:
-                log(
-                    f"  env{env_id}: FAILED  best_lift={diag.get('best_lift_height', 0):.3f} "
-                    f"place={diag.get('obj_place_xy_dist', 0):.3f} "
-                    f"ee_safe={diag.get('ee_safe')} "
-                    f"ee_grasp={diag.get('ee_to_grasp_dist_final', 0):.3f} "
-                    f"ee_obj_xy={diag.get('ee_to_obj_xy_final', 0):.3f} "
-                    f"grip={diag.get('gripper_cmd_final', 0):.3f} "
-                    f"joints={[round(x, 3) for x in diag.get('gripper_joint_pos_final', [])]} "
-                    f"lifted={diag.get('obj_lifted')} at_place={diag.get('obj_at_place')}"
-                )
-
-    elapsed = time.monotonic() - t_start
-    log("=" * 60)
-    log(f"Collection done. {n_success}/{n_target} successes from {n_tried} attempts in {elapsed/60:.1f} min")
-    log(f"Success rate: {n_success}/{max(1, n_tried)} = {100*n_success/max(1,n_tried):.1f}%")
-    log(f"Output: {out_dir}")
-    if video_recorder is not None:
-        video_recorder.close()
-        log(f"Video saved: {video_recorder.path} ({video_recorder.frame_count} frames)")
+                log("No video frames recorded.")
     log("Exiting process.")
-    sys.stdout.flush()
-    sys.stderr.flush()
-    os._exit(0)
 
 
 if __name__ == "__main__":
     try:
         main()
-    except Exception as exc:
-        log(f"EXCEPTION: {type(exc).__name__}: {exc}")
-        log(traceback.format_exc())
-        raise
     finally:
         close_app()

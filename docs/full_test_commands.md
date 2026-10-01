@@ -45,7 +45,7 @@ python -m compileall -q vla_sim scripts
 
 - `git status --short` 沒有輸出。
 - commit 與本次要驗證或交接的版本一致。
-- 8 項單元測試全部顯示 `ok`。
+- 單元測試全部顯示 `ok`。
 - `git diff --check` 與 `compileall` 都沒有錯誤輸出。
 
 確認 GPU 與 8100、8000 port：
@@ -409,6 +409,27 @@ with h5py.File(sys.argv[1], "r") as f:
 print("PASS: multi-env canonical H5 schema")
 PY
 ```
+
+不加 `--overwrite` 重跑收集時，預期出現 `FileExistsError`，既有 H5 必須保持
+不變。所有收集入口只有收滿指定的成功 episode 數量才會以退出碼 0 結束；
+相機讀取或 H5 寫入發生錯誤時會停止，不會用黑圖代替訓練影像。
+共用 `close_app()` 會將例外狀態傳給 Isaac Sim 6.0.1 的
+[`close(exit_code=...)`](https://docs.isaacsim.omniverse.nvidia.com/6.0.1/py/source/extensions/isaacsim.simulation_app/docs/index.html)，
+避免 fast shutdown 把失敗回報為退出碼 0。
+
+可刻意設定最多兩次嘗試、要求三筆資料，檢查不足數量時會回傳非零退出碼：
+
+```bash
+if isaaclab scripts/collect_demos_multi_env.py \
+  --headless --enable_cameras --target red_mug \
+  --episodes 3 --num-envs 2 --max-episodes-tried 2 --no-save-h5; then
+  echo "FAIL: incomplete collection returned success" >&2
+else
+  echo "確認 log 顯示 collected 2/3（或更少），且程式已結束"
+fi
+```
+
+此指令是預期失敗測試，不會產生新的 H5。
 
 ### 5.3 Multi-env 預覽影片
 
@@ -895,7 +916,7 @@ rm -rf ~/IsaacLab/ur3e_vla/outputs/test/full_test
 ## 測試結果紀錄
 
 ```text
-[ ] Git diff check / 8 unit tests / Python compile
+[ ] Git diff check / unit tests / Python compile
 [ ] 純場景 headless
 [ ] 純場景 GUI / YOLO 畫面
 [ ] Bridge health / status
@@ -905,6 +926,7 @@ rm -rf ~/IsaacLab/ur3e_vla/outputs/test/full_test
 [ ] 單環境三物件 smoke test
 [ ] 單環境 H5 schema
 [ ] Multi-env smoke / H5 / video
+[ ] H5 不覆寫既有資料 / 未收滿回傳非零退出碼
 [ ] MultiView H5 / 五視角影片
 [ ] Assembled robot exporter
 [ ] Collision asset generator

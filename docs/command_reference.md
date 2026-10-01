@@ -58,6 +58,12 @@ isaaclab scripts/collect_demos.py \
   --no-save-h5
 ```
 
+All collectors return a nonzero exit code when the requested episode count is
+not reached or a camera/export fails. Successfully written episodes remain in
+the partial H5 for inspection. An existing H5 requires `--overwrite`; choose a
+new output directory to preserve it. The H5 writer also rejects duplicate
+episode IDs rather than replacing existing demonstrations.
+
 ## Optional shared datasets and models
 
 Each developer can keep a separate Git checkout while sharing generated
