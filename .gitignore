@@ -20,3 +20,6 @@ backups/
 # Local workstation administration notes and installer.
 docs/shared_environment.md
 scripts/tools/setup_shared_workstation.sh
+
+# Private, directly usable workstation commands and connection settings.
+docs/local_commands.md

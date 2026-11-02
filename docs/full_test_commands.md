@@ -37,16 +37,31 @@ git branch --show-current
 git log -1 --oneline
 
 git diff --check
-python -m unittest discover -s tests -v
+python -m unittest discover -s tests -q
 python -m compileall -q vla_sim scripts
 ```
 
 預期：
 
-- `git status --short` 沒有輸出。
+- 固定 commit 交接時 `git status --short` 應沒有輸出；若驗證未提交修正，
+  保存差異與檔案指紋，不能只記 HEAD。
 - commit 與本次要驗證或交接的版本一致。
-- 單元測試全部顯示 `ok`。
+- 單元測試摘要顯示 `OK`。
 - `git diff --check` 與 `compileall` 都沒有錯誤輸出。
+
+也可以用一個命令保存版本、CPU 測試、語法與選定 H5 的只讀檢查：
+
+```bash
+python scripts/tools/acceptance_preflight.py \
+  --h5 outputs/test/data/multiview_rollback_20261004/h5/multiview/red_mug/demos.h5
+```
+
+預設會建立新的 `outputs/test/preflight/preflight_<UTC時間>_<識別碼>/`，保存
+`report.json` 與精簡檢查摘要；各檢查詳情留在 log。`--h5` 可以重複；省略
+時會明確記錄未檢查 H5。`--output-dir` 指定的目錄必須尚不存在，失敗項目
+會使退出碼非零。`--skip-unit-tests` 僅供明確省略測試時使用，report 會記錄。
+工具保存測試前後的 HEAD、Git 差異與修改檔 SHA，檔案中途改變會回報失敗。
+這個命令不啟動 Isaac、Unity、模型或實體控制，通過不代替人工驗收。
 
 確認 GPU 與 8100、8000 port：
 
@@ -228,7 +243,7 @@ python3 scripts/tools/test_bridge_client.py \
   --server "$SERVER" --control reset --seed 42
 ```
 
-### 3.5 固定 seed 三條正式配對
+### 3.5 固定 canonical 場景三條正式配對
 
 編號：
 
@@ -915,6 +930,11 @@ rm -rf ~/IsaacLab/ur3e_vla/outputs/test/full_test
 
 ## 測試結果紀錄
 
+目前狀態與人工驗收順序統一記在 [acceptance.md](acceptance.md)，Remote
+實驗使用 [remote_readiness.md](remote_readiness.md)。舊 commit、舊測試數與
+專項補測只在 [歷史驗證紀錄](archive/validation_history.md) 保留供追查。
+以下是完整驗收範圍，不能因部分短測通過就全部勾選。
+
 ```text
 [ ] Git diff check / unit tests / Python compile
 [ ] 純場景 headless
@@ -934,7 +954,7 @@ rm -rf ~/IsaacLab/ur3e_vla/outputs/test/full_test
 [ ] H5 subset / image / video tools
 [ ] TFDS build
 [ ] VLA server health / prediction
-[ ] VLA simulation rollout（requests > 0、errors = 0）
+[ ] VLA simulation rollout（完成指定步數、requests > 0、errors = 0、consumed_actions > 0）
 [ ] Fake JointState live / stale HOLD
 [ ] 實體 UR3e → Isaac read-only sync（需要實體）
 [ ] obj=1,dest=2 sim-to-real（需要實體）

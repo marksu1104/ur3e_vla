@@ -149,13 +149,12 @@ isaaclab scripts/sync_sim_real.py \
   --joint-state-timeout 0.5
 ```
 
-For bridge endpoints and Unity integration, see
-[docs/remote_bridge.md](docs/remote_bridge.md). More command variants are in
-[docs/command_reference.md](docs/command_reference.md). A complete ordered
-verification checklist is in
-[docs/full_test_commands.md](docs/full_test_commands.md).
-The currently supported sim-to-real task and reset procedure are documented in
-[docs/sim_real_sync.md](docs/sim_real_sync.md).
+Daily commands are in [docs/command_reference.md](docs/command_reference.md);
+this workstation's concrete settings stay in the Git-ignored `docs/local_commands.md`.
+The current automated status and remaining manual checks are in
+[docs/acceptance.md](docs/acceptance.md). Detailed bridge and Unity behavior is
+in [docs/remote_bridge.md](docs/remote_bridge.md), and sim–real procedures are
+in [docs/sim_real_sync.md](docs/sim_real_sync.md).
 
 ## OpenVLA Training Boundary
 
@@ -188,7 +187,8 @@ manifest before redistributing derived YCB/NVIDIA geometry.
 ## Development Notes
 
 - Keep generated data and models under `outputs/`; it is ignored by Git.
-- Put smoke-test artifacts under `outputs/test/`.
+- Group smoke-test artifacts under `outputs/test/{remote,data,model,preflight}/`.
+- Tests and tool purposes are summarized in [docs/project_layout.md](docs/project_layout.md#tests-and-tools).
 - Do not commit model exports or generated H5 data.
 - Treat `SCENE_OPTIONS` as workflow composition, not as a second set of scene
   constants. Change a shared physical property once at its authoritative source.

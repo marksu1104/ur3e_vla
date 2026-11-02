@@ -1,20 +1,27 @@
 # UR3e Real Robot VLA Runbook
 
-This runbook describes the current validated flow for testing the sim-trained mug VLA model on the real UR3e. The current goal is **reaching / alignment only**. The robot does not have a real gripper installed, so the VLA gripper output is logged but ignored.
+Updated 2026-10-30. The user confirmed on 2026-10-14 that a real gripper is
+installed and VLA has been tried on hardware: alignment is possible, but lifting
+the object remains difficult. Reliable grasping has not been established. The
+commands below describe the existing test interface; this update ran no robot
+or ROS session.
 
 ## Current Scope
 
-- Targets: `red_mug`, `blue_mug`
+- Historical reaching tests used `red_mug` and `blue_mug`; use instructions and objects supported by the particular trained model. The canonical simulation uses spoon, red mug and bowl.
 - Input image: one RGB frame from `/image_raw`
 - VLA output: 7D action `[dx, dy, dz, droll, dpitch, dyaw, gripper]`
 - Real robot control: MoveIt Servo twist command
 - Servo topic: `/servo_node/delta_twist_cmds`
-- Gripper command: ignored
+- Gripper command: `action[6] > --gripper-close-threshold` sends a close request through `SetIO`; otherwise it sends open. Default DO pin is 0, configurable with `--gripper-io-pin`. Commands require `--enable-motion` and an available IO service.
 - Rotation: disabled for the current safest test by setting `--max-angular-speed 0`
 
 ## Safety Notes
 
-The VLA model can still produce unstable actions on real camera images. It may switch directions, confuse targets if the scene is poorly arranged, or output close/open phase changes that are not useful without a gripper.
+The VLA model can produce unstable actions on real camera images. It may
+switch directions, confuse targets, or issue close/open requests at the wrong
+time. Enabling motion also enables these gripper requests; reaching examples
+do not disable the gripper.
 
 For the current test:
 
@@ -26,6 +33,9 @@ For the current test:
 - If the robot moves toward the wrong object, stop and adjust cup placement/camera view.
 - If diagnostics show NaN controller commands, stop VLA and reset to a better initial pose.
 
+Set `ROBOT_IP` for your robot cell before starting the driver. This workstation's
+connection values are retained in the Git-ignored `docs/local_commands.md`.
+
 ## Terminal A: UR Driver
 
 ```bash
@@ -33,7 +43,7 @@ cd ~/IsaacLab/ur3e_vla
 source /opt/isaac_ros2/setup.bash
 
 ros2 launch ur_robot_driver ur3e.launch.py \
-  robot_ip:=192.168.10.175 \
+  robot_ip:="${ROBOT_IP:?Set ROBOT_IP for your robot cell}" \
   use_mock_hardware:=false \
   initial_joint_controller:=forward_velocity_controller \
   launch_rviz:=false
@@ -46,7 +56,7 @@ cd ~/IsaacLab/ur3e_vla
 source /opt/isaac_ros2/setup.bash
 
 ros2 launch ur_robot_driver ur3e.launch.py \
-  robot_ip:=yyy.yyy.yyy.yyy \
+  robot_ip:=127.0.0.1 \
   use_mock_hardware:=true \
   initial_joint_controller:=forward_velocity_controller \
   launch_rviz:=false
@@ -147,7 +157,10 @@ Wait until the server prints:
 
 ## Terminal G: Real Robot VLA Servo Test
 
-Start with a short, no-rotation reaching test. The gripper dimension is ignored.
+Start with a short, no-rotation test. These commands explicitly enable both
+arm motion and gripper IO. Omitting `--enable-motion` keeps the script in dry
+run mode. Blue-mug examples are historical and require a model trained for
+that object; they are not evidence of canonical-scene model support.
 
 Red mug:
 
@@ -192,7 +205,7 @@ Expected behavior:
 
 - Red instruction should move toward the red mug.
 - Blue instruction should move toward the blue mug.
-- The robot may not complete a grasp because there is no real gripper.
+- A complete grasp and lift are not yet a validated outcome; record failures rather than treating alignment as success.
 - If the robot drifts toward the wrong mug, stop and adjust cup placement/camera view.
 
 ## Emergency Stop / Zero Command
@@ -207,13 +220,16 @@ ros2 topic pub /servo_node/delta_twist_cmds geometry_msgs/msg/TwistStamped \
 
 Also keep the physical emergency stop / teach pendant ready.
 
-## Current Observations
+## Reported and Historical Observations
+
+These are previous observations, not new hardware measurements from this update.
+The latest user report is installed gripper, partial alignment and difficult grasping.
 
 - The real camera pipeline works: `/image_raw -> VLA server -> action`.
 - Latency has been around 120-150 ms.
 - The model reacts differently to red and blue instructions after adjusting cup positions.
 - If both mugs are poorly placed, the model may confuse targets.
-- On real camera images, gripper output may jump between `0.0` and `0.996`; it is ignored for now.
+- On real camera images, gripper output was observed jumping between `0.0` and `0.996`; the current script interprets it as open/close, so verify timing and physical feedback.
 - Rotation/yaw can be unstable, so the current real test disables angular motion.
 - MoveIt Servo may output NaN joint velocities from a poor initial wrist/arm pose. The fixed teach-pendant initial pose is the current workaround.
 - Use `--diagnostics` to check `controller=finite=True` before trusting a run.
@@ -226,5 +242,29 @@ Before longer or more autonomous tests, add:
 - minimum table-height / z limit,
 - action median or temporal smoothing,
 - logging to CSV,
-- fixed camera placement matching Isaac `camera_main`,
+- fixed camera placement and preprocessing matching the training image source (`camera_policy` in the canonical workflow),
 - optional small real-image fine-tuning data.
+
+## Action Mapping and Offline Checks
+
+The current project records 5 Hz pose deltas, while this script multiplies
+translation/rotation outputs by gains and sends velocity commands in
+`--frame-id` (default `base_link`). Script defaults are 1 Hz inference and
+10 Hz publishing, with angular gain 0. The examples above override publishing
+to 20 Hz. Check the model's dataset statistics, action units, coordinate frame,
+TCP, actual inference latency and real camera placement before attributing poor
+grasping to the model. No gains, rate defaults or action conversion were changed
+in this update; this difference has not been established as the cause of failure.
+
+CPU-only regressions now check that failed inference clears residual smoothed
+velocity and sends zero through the existing motion gate without issuing a new
+gripper request. The next valid prediction can recover. `SetIO` rejection or a
+failed future is logged as failure and permits the matching gripper request to
+be retried; a delayed failure cannot clear a newer opposite command's cache.
+An accepted IO request does not itself prove a physical grasp.
+
+Still pending: camera/action freshness stopping, handling interrupted inference
+and shutdown, workspace/table limits, and integration of physical grasp feedback
+with VLA task completion. These CPU checks do not validate physical stopping or
+grasping. The scripted synchronization path has its own DI feedback and timeout
+logic and remains limited to `obj=1, dest=2`.

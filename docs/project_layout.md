@@ -14,7 +14,11 @@ outputs/
   tfds/<dataset>/                    TFDS build root (TFDS adds name/version).
   models/<run>/                      Exported model and dataset_statistics.json.
   models/runs/                       Training logs and temporary checkpoints.
-  test/<purpose>/                    Disposable smoke tests, previews, videos.
+  test/remote/<run>/                 Bridge, stream, synchronization evidence.
+  test/data/<run>/                   Collection H5, previews, manual review.
+  test/model/<run>/                  Training/inference smoke-test artifacts.
+  test/preflight/<run>/              CPU checks and version/hash reports.
+  test/full_test/                    One planned manual acceptance run.
   printable/                         STL parts and manifest.json.
 ```
 
@@ -48,8 +52,12 @@ or model exports. See `docs/command_reference.md` for direct-write examples.
   be assumed reproducible from H5 alone. Back up valuable H5/model exports.
 - Keep only selected demonstration media; put exploratory images and videos in
   `outputs/test/` and remove them after review.
-- Do not create an `archive/` for miscellaneous old outputs. Use an intentional,
-  separately managed backup for anything that must survive cleanup.
+- Group test outputs by purpose, not by an unlabelled miscellaneous archive.
+  Keep the evidence needed for current acceptance; remove superseded smoke
+  tests after review. Use a separately managed backup for valuable H5/models.
+  Latest evidence is linked from `docs/acceptance.md` and `docs/remote_readiness.md`.
+  Old reports are consolidated in each group's ignored `history.json`; the
+  existing `relocation_manifest.json` records path changes and cleanup.
 - Direct new runs to distinct paths. Avoid `--overwrite` unless deliberately
   replacing the exact dataset or model run.
 
@@ -66,7 +74,8 @@ or model exports. See `docs/command_reference.md` for direct-write examples.
 - `rlds_builder/`: source code that converts H5 to TFDS.
 - `scripts/tools/openvla_ur3e.patch`: reviewed adapter for the pinned external
   OpenVLA checkout; weights and that checkout stay outside this repository.
-- `tests/`: small automated checks that do not require full Isaac startup.
+- `tests/`: automated regression checks that do not require full Isaac startup;
+  retain these sources. `__pycache__/` is disposable generated cache.
 - `docs/`: runbooks and operational notes; `command_reference.md` holds normal
   commands and this file owns artifact paths.
 - `vla_sim/config.py`: shared numeric scene and task values.
@@ -83,3 +92,36 @@ Avoid copying a scene class into a new entry point. Select named scene options
 from the shared base scene and keep workflow-specific additions out of options
 that do not use them. This keeps local lighting, camera, and prop experiments
 from changing collection, VLA, synchronization, or MultiView unexpectedly.
+
+## Public and Local Instructions
+
+`docs/command_reference.md` contains complete shareable commands, with variables
+for external checkouts and cell-specific connections. `docs/local_commands.md`
+is an ignored private copy with this workstation's concrete paths and connection
+settings; it is not copied by a new Git clone. `docs/shared_environment.md` is
+also ignored and documents local runtime administration. Transfer these private
+files separately when handing over this workstation, rather than publishing
+them. All operational entry points and their CLI parameters remain in `scripts/`.
+
+## Tests and Tools
+
+`tests/` has 16 modules and 142 CPU regression tests. They protect H5/MultiView
+writing, TFDS conversion, Remote and synchronization command handling, VLA
+client/server/rollout, scene options, startup/shutdown, and the OpenVLA patch.
+Keep these sources; run `CUDA_VISIBLE_DEVICES='' python -m unittest discover -s tests -q`
+after loading the Isaac/ROS environment. The patch test needs a local pinned
+OpenVLA Git checkout; set `UR3E_OPENVLA_SOURCE` if it is outside the known layout.
+
+| Tools | Purpose |
+| --- | --- |
+| validate_h5.py, export_h5_frames.py, subset_h5_demos.py | Read-only H5 checks, previews, or a separate smaller H5 |
+| acceptance_preflight.py | CPU tests, version/hash capture, optional read-only H5 check |
+| test_bridge_client.py, check_vla_prediction.py | Manual bridge requests or inference comparison; bridge tasks may act on the connected server |
+| export_robot_asset.py, make_usd_collision_asset.py, export_printable_assets.py | Rebuild robot/collision assets or export STL; ordinary Remote runs need none of these |
+| openvla_ur3e.patch | Register UR3e data and training export in the pinned external OpenVLA source |
+
+Generated test scripts are not project entry points. Superseded preflight and
+Remote outputs can be removed after their JSON results have been retained;
+keep current H5, five-view previews, Remote evidence, and the smoke-test model
+while manual acceptance is pending. Model exports may contain necessary Python
+implementation files and must be preserved as a complete directory.

@@ -18,18 +18,23 @@ Every other object/destination pair is rejected before a trial is reserved.
 resets the virtual objects, and moves the real arm back to `HOME_POS`. It is a
 physical motion command when `--enable-motion` is active.
 
+In sim-to-real mode, `/control` accepts only `reset`; `pause` and `resume`
+return HTTP 409 without reserving a command. The virtual Remote runner and the
+read-only real-to-sim mode retain their existing pause/resume/reset controls.
+
 The stream and `/status` remain available throughout the session on port 8100.
 
 ## Environment
 
-Use the ROS domain values configured for the current robot cell. The values
-below are specific to this workstation; do not add them globally to shell
-startup files.
+Use the ROS domain configured for your robot cell. Set `ROS_DOMAIN_ID` and
+`ROBOT_IP` for that cell before following this runbook; this workstation's
+values are retained in the Git-ignored `docs/local_commands.md`. Do not add
+them globally to shell startup files.
 
 ```bash
 cd ~/IsaacLab/ur3e_vla
 source /opt/isaac_ros2/setup.bash
-export ROS_DOMAIN_ID=73
+export ROS_DOMAIN_ID="${ROS_DOMAIN_ID:?Set ROS_DOMAIN_ID for your robot cell}"
 export ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST
 ```
 
@@ -41,11 +46,11 @@ domain variables in every ROS and Isaac terminal.
 ```bash
 cd ~/IsaacLab/ur3e_vla
 source /opt/isaac_ros2/setup.bash
-export ROS_DOMAIN_ID=73
+export ROS_DOMAIN_ID="${ROS_DOMAIN_ID:?Set ROS_DOMAIN_ID for your robot cell}"
 export ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST
 
 ros2 launch ur_robot_driver ur3e.launch.py \
-  robot_ip:=192.168.10.175 \
+  robot_ip:="${ROBOT_IP:?Set ROBOT_IP for your robot cell}" \
   use_mock_hardware:=false \
   initial_joint_controller:=forward_velocity_controller \
   launch_rviz:=false
@@ -63,7 +68,7 @@ topic are sufficient. Sim-to-real motion also requires Terminals B and C.
 ```bash
 cd ~/IsaacLab/ur3e_vla
 source /opt/isaac_ros2/setup.bash
-export ROS_DOMAIN_ID=73
+export ROS_DOMAIN_ID="${ROS_DOMAIN_ID:?Set ROS_DOMAIN_ID for your robot cell}"
 export ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST
 
 ros2 launch vla_ros_bridge vla_bridge.launch.py
@@ -76,7 +81,7 @@ Keep this terminal running while sim-to-real is active.
 ```bash
 cd ~/IsaacLab/ur3e_vla
 source /opt/isaac_ros2/setup.bash
-export ROS_DOMAIN_ID=73
+export ROS_DOMAIN_ID="${ROS_DOMAIN_ID:?Set ROS_DOMAIN_ID for your robot cell}"
 export ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST
 
 ros2 control switch_controllers \
@@ -111,7 +116,7 @@ robot motion:
 ```bash
 cd ~/IsaacLab/ur3e_vla
 source /opt/isaac_ros2/setup.bash
-export ROS_DOMAIN_ID=73
+export ROS_DOMAIN_ID="${ROS_DOMAIN_ID:?Set ROS_DOMAIN_ID for your robot cell}"
 export ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST
 
 isaaclab scripts/sync_sim_real.py \
@@ -128,7 +133,7 @@ Start without `--enable-motion` first:
 ```bash
 cd ~/IsaacLab/ur3e_vla
 source /opt/isaac_ros2/setup.bash
-export ROS_DOMAIN_ID=73
+export ROS_DOMAIN_ID="${ROS_DOMAIN_ID:?Set ROS_DOMAIN_ID for your robot cell}"
 export ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST
 
 isaaclab scripts/sync_sim_real.py \
@@ -171,7 +176,7 @@ parameters plus `--enable-motion`:
 ```bash
 cd ~/IsaacLab/ur3e_vla
 source /opt/isaac_ros2/setup.bash
-export ROS_DOMAIN_ID=73
+export ROS_DOMAIN_ID="${ROS_DOMAIN_ID:?Set ROS_DOMAIN_ID for your robot cell}"
 export ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST
 
 isaaclab scripts/sync_sim_real.py \

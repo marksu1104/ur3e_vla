@@ -148,7 +148,7 @@ Request 沒有 body。這個 API 用於查看目前完整狀態，例如：
 | `progress` | object 或 null | 任務時間與夾爪數值 |
 | `result` | object 或 null | 任務結束後的結果 |
 | `object_poses` | object 或 null | waiting 時各物件的 `[x,y,z]` |
-| `seed` | integer 或 null | reset 使用的 seed |
+| `seed` | integer 或 null | 記錄的 reset seed；目前不隨機化場景或設定 RNG |
 | `frames_sent` | integer | server 已編碼的影格數 |
 | `gripper` | object（waiting 後提供） | 夾爪命令、關節值與 soft limits |
 | `yolo_visibility` | object 或 null | 物件入鏡診斷 |
@@ -222,11 +222,14 @@ Request body 三選一：
 {"action":"reset"}
 ~~~
 
-Reset 也可以指定整數 seed：
+Reset 也可以指定用來記錄的整數 seed：
 
 ~~~json
 {"action":"reset","seed":42}
 ~~~
+
+目前 reset 恢復 canonical 的固定物件位置，`seed` 只保存在 status／event，
+不會改變位置或設定亂數產生器。更換 seed 不能當成不同隨機場景的驗證。
 
 成功接受後回傳 HTTP 200：
 
