@@ -215,14 +215,17 @@ Use a **clean** OpenVLA checkout; do not apply this over another developer's
 uncommitted work. Set `PROJECT_ROOT` to your own clone of this repository:
 
 ```bash
+(
+set -euo pipefail
 PROJECT_ROOT=/path/to/ur3e_vla
 OPENVLA_SRC=/path/to/openvla
 cd "$OPENVLA_SRC"
-test -z "$(git status --porcelain)" || { echo 'OpenVLA checkout is not clean'; false; }
+test -z "$(git status --porcelain)" || { echo 'OpenVLA checkout is not clean'; exit 1; }
 git switch --detach c8f03f48af692657d3060c19588038c7220e9af9
 git apply --check "$PROJECT_ROOT/scripts/tools/openvla_ur3e.patch"
 git apply "$PROJECT_ROOT/scripts/tools/openvla_ur3e.patch"
 git diff --check
+)
 ```
 
 The 2026-10-04 integration ran a real one-update BF16 LoRA fine-tune,
@@ -242,6 +245,8 @@ environment) after applying the patch and building TFDS. For a personal run,
 replace the `/srv/isaac_ros2` paths with this checkout's `outputs/` paths.
 
 ```bash
+(
+set -euo pipefail
 SHARED=/srv/isaac_ros2
 OPENVLA_SRC=/path/to/your/openvla
 BASE_MODEL=openvla/openvla-7b
@@ -249,7 +254,7 @@ FINAL_MODEL="$SHARED/models/pick_place_v1_run001"
 umask 002
 conda activate openvla
 cd "$OPENVLA_SRC"
-test ! -e "$FINAL_MODEL" || { echo "Choose a new FINAL_MODEL path"; false; }
+test ! -e "$FINAL_MODEL" || { echo "Choose a new FINAL_MODEL path"; exit 1; }
 
 WANDB_MODE=disabled torchrun --standalone --nproc_per_node=1 vla-scripts/finetune.py \
   --vla_path "$BASE_MODEL" \
@@ -260,6 +265,7 @@ WANDB_MODE=disabled torchrun --standalone --nproc_per_node=1 vla-scripts/finetun
   --final_model_dir "$FINAL_MODEL" \
   --batch_size 1 --max_steps 2000 --save_steps 250 \
   --learning_rate 1e-4 --shuffle_buffer_size 1000 --image_aug False
+)
 ```
 
 `--final_model_dir` must not already exist; choose a new run-specific path

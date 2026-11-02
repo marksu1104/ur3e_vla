@@ -684,14 +684,17 @@ H5 → TFDS → OpenVLA 訓練指令見 [command_reference.md](command_reference
 以下只檢查外部 checkout 的資料整合；不要複製另一個帳號的未提交修改：
 
 ```bash
+(
+set -euo pipefail
 PROJECT_ROOT=/path/to/ur3e_vla
 OPENVLA_SRC=/path/to/openvla
 cd "$OPENVLA_SRC"
-test -z "$(git status --porcelain)" || { echo 'OpenVLA checkout is not clean'; false; }
+test -z "$(git status --porcelain)" || { echo 'OpenVLA checkout is not clean'; exit 1; }
 git switch --detach c8f03f48af692657d3060c19588038c7220e9af9
 git apply --check "$PROJECT_ROOT/scripts/tools/openvla_ur3e.patch"
 git apply "$PROJECT_ROOT/scripts/tools/openvla_ur3e.patch"
 git diff --check
+)
 ```
 
 這個 patch 註冊 `ur3e_vla_dataset`、把 UR3e state/action 轉成 OpenVLA
@@ -701,18 +704,21 @@ git diff --check
 ### 9.1 Terminal A：啟動 VLA server
 
 ```bash
+(
+set -euo pipefail
 source ~/miniconda3/etc/profile.d/conda.sh
 conda activate openvla
 cd ~/IsaacLab/ur3e_vla
 
 export MODEL_PATH=/srv/isaac_ros2/models/pick_place_v1
-test -f "$MODEL_PATH/dataset_statistics.json" || { echo "尚無可測試的微調模型：$MODEL_PATH"; false; }
+test -f "$MODEL_PATH/dataset_statistics.json" || { echo "尚無可測試的微調模型：$MODEL_PATH"; exit 1; }
 
 python3 scripts/vla_server.py \
   --model-path "$MODEL_PATH" \
   --unnorm-key ur3e_vla_dataset \
   --host 127.0.0.1 \
   --port 8000
+)
 ```
 
 等待出現：

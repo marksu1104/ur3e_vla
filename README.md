@@ -151,8 +151,8 @@ isaaclab scripts/sync_sim_real.py \
 
 Daily commands are in [docs/command_reference.md](docs/command_reference.md);
 this workstation's concrete settings stay in the Git-ignored `docs/local_commands.md`.
-The current automated status and remaining manual checks are in
-[docs/acceptance.md](docs/acceptance.md). Detailed bridge and Unity behavior is
+The [Luna handoff plan and acceptance status](docs/acceptance.md) is the single
+entry point for permitted work, next tasks, fixed settings and known pitfalls. Detailed bridge and Unity behavior is
 in [docs/remote_bridge.md](docs/remote_bridge.md), and sim–real procedures are
 in [docs/sim_real_sync.md](docs/sim_real_sync.md).
 
