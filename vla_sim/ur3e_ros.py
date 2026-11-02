@@ -162,7 +162,10 @@ class RealArmCommander:
         self._motion_enabled = bool(motion_enabled)
         self._gripper_io_pin = int(gripper_io_pin)
         self._last_gripper_sent: float | None = None
+        self._last_gripper_accepted: float | None = None
+        self._gripper_request_id = 0
         self._digital_inputs: dict[int, bool] = {}
+        self._digital_inputs_received_at: float | None = None
 
         self._node = Node("ur3e_sim_to_real")
         self._twist_pub = self._node.create_publisher(TwistStamped, servo_topic, 10)
@@ -195,6 +198,18 @@ class RealArmCommander:
         """Latest digital-input readings, keyed by pin number."""
         return dict(self._digital_inputs)
 
+    @property
+    def digital_inputs_received_at(self) -> float | None:
+        """Monotonic receipt time; a retained DI value is not fresh feedback."""
+        return self._digital_inputs_received_at
+
+    def gripper_command_accepted(self, closed: bool | None) -> bool:
+        """Whether the latest requested state has an accepted SetIO response."""
+        if closed is None:
+            return False
+        value = 1.0 if closed else 0.0
+        return self._last_gripper_sent == value and self._last_gripper_accepted == value
+
     def _on_io_states(self, message) -> None:
         readings: dict[int, bool] = {}
         for entry in getattr(message, "digital_in_states", []):
@@ -203,6 +218,7 @@ class RealArmCommander:
             except (AttributeError, TypeError, ValueError):
                 continue
         self._digital_inputs = readings
+        self._digital_inputs_received_at = monotonic()
 
     def spin_once(self) -> None:
         self._rclpy.spin_once(self._node, timeout_sec=0.0)
@@ -239,19 +255,41 @@ class RealArmCommander:
         if value == self._last_gripper_sent:
             return
         self._last_gripper_sent = value
+        self._last_gripper_accepted = None
+        self._gripper_request_id += 1
+        request_id = self._gripper_request_id
 
-        request = self._setio_type.Request()
-        request.fun = self._setio_type.Request.FUN_SET_DIGITAL_OUT
-        request.pin = self._gripper_io_pin
-        request.state = value
-        future = self._gripper_client.call_async(request)
-        future.add_done_callback(lambda f: self._on_gripper_response(f, value))
-
-    def _on_gripper_response(self, future, value: float) -> None:
         try:
-            future.result()
-            self._log(f"[RealArm] DO_{self._gripper_io_pin} set to {value:.0f}")
+            request = self._setio_type.Request()
+            request.fun = self._setio_type.Request.FUN_SET_DIGITAL_OUT
+            request.pin = self._gripper_io_pin
+            request.state = value
+            future = self._gripper_client.call_async(request)
+            future.add_done_callback(
+                lambda f: self._on_gripper_response(f, value, request_id)
+            )
         except Exception as exc:
+            if request_id == self._gripper_request_id:
+                self._last_gripper_sent = None
+                self._last_gripper_accepted = None
+            self._log(f"[RealArm] SetIO failed: {type(exc).__name__}: {exc}")
+
+    def _on_gripper_response(
+        self, future, value: float, request_id: int | None = None
+    ) -> None:
+        request_id = self._gripper_request_id if request_id is None else request_id
+        try:
+            response = future.result()
+            if response is None or not response.success:
+                raise RuntimeError("SetIO rejected the gripper request")
+            if request_id != self._gripper_request_id:
+                return
+            self._last_gripper_accepted = value
+            self._log(f"[RealArm] accepted gripper DO_{self._gripper_io_pin}={value:.0f}")
+        except Exception as exc:
+            if request_id == self._gripper_request_id:
+                self._last_gripper_sent = None
+                self._last_gripper_accepted = None
             self._log(f"[RealArm] SetIO failed: {type(exc).__name__}: {exc}")
 
     def close(self) -> None:

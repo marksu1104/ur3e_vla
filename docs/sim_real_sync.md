@@ -14,7 +14,7 @@ control:     reset
 ```
 
 Every other object/destination pair is rejected before a trial is reserved.
-`reset` preserves the currently validated behavior: it opens the real gripper,
+`reset` keeps the implemented behavior: it opens the real gripper,
 resets the virtual objects, and moves the real arm back to `HOME_POS`. It is a
 physical motion command when `--enable-motion` is active.
 
@@ -23,6 +23,24 @@ return HTTP 409 without reserving a command. The virtual Remote runner and the
 read-only real-to-sim mode retain their existing pause/resume/reset controls.
 
 The stream and `/status` remain available throughout the session on port 8100.
+
+## Gripper Feedback Contract
+
+SetIO rejection, an empty response, or dispatch/future exceptions are failures.
+Only the latest request token can mark the command accepted or clear its cache;
+old same/opposite responses cannot overwrite a newer request.
+
+At a gripper waypoint, DI confirmation requires the latest requested command
+to be accepted and a sample received after that waypoint request, not in the
+future, and at most 0.5 seconds old. This is a local monotonic callback receipt
+time, not a sensor capture timestamp. Missing acceptance or fresh DI holds zero
+velocity until the existing gripper timeout aborts; there is no automatic rapid
+IO retry. The motion gate and supported pair remain unchanged.
+
+These checks confirm an IO action at its waypoint. They do not monitor dropped
+objects during transport or prove grasp/place success; completion still denotes
+trajectory completion. Reset retains its existing open-and-home behavior. This
+change was tested on CPU substitutes only and still needs field validation.
 
 ## Environment
 

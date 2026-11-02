@@ -89,31 +89,50 @@ class GripperStatus:
 
 
 class GripperFeedbackTracker:
-    """Track one gripper request until the expected digital input confirms it."""
+    """Confirm accepted requests using a recent, post-request DI sample."""
 
-    def __init__(self, timeout_seconds: float):
-        if timeout_seconds <= 0.0:
-            raise ValueError("timeout_seconds must be positive")
+    def __init__(self, timeout_seconds: float, feedback_timeout: float = 0.5):
+        if not math.isfinite(timeout_seconds) or timeout_seconds <= 0.0:
+            raise ValueError("timeout_seconds must be finite and positive")
+        if not math.isfinite(feedback_timeout) or feedback_timeout <= 0.0:
+            raise ValueError("feedback_timeout must be finite and positive")
         self.timeout_seconds = float(timeout_seconds)
+        self.feedback_timeout = float(feedback_timeout)
         self._want_closed: bool | None = None
         self._requested_at: float | None = None
         self._settled: str | None = None
 
     def request(self, closed: bool, now: float) -> None:
+        if not math.isfinite(now):
+            raise ValueError("request time must be finite")
         self._want_closed = bool(closed)
         self._requested_at = float(now)
         self._settled = None
 
-    def update(self, digital_inputs, now: float) -> GripperStatus:
+    @property
+    def want_closed(self) -> bool | None:
+        return self._want_closed
+
+    def update(
+        self, digital_inputs, now: float, *, received_at: float | None = None,
+        command_accepted: bool = False,
+    ) -> GripperStatus:
         if self._want_closed is None or self._requested_at is None:
             return GripperStatus("idle", None, None)
         elapsed = max(0.0, float(now) - self._requested_at)
         if self._settled is None:
             expected_pin = 2 if self._want_closed else 0
-            if bool(digital_inputs.get(expected_pin, False)):
-                self._settled = "confirmed"
-            elif elapsed >= self.timeout_seconds:
+            fresh = (
+                received_at is not None
+                and math.isfinite(received_at)
+                and math.isfinite(now)
+                and self._requested_at <= received_at <= now
+                and now - received_at <= self.feedback_timeout
+            )
+            if elapsed >= self.timeout_seconds:
                 self._settled = "timeout"
+            elif command_accepted and fresh and bool(digital_inputs.get(expected_pin, False)):
+                self._settled = "confirmed"
         return GripperStatus(
             self._settled or "waiting", self._want_closed, elapsed
         )
@@ -362,7 +381,7 @@ class SimToRealTrial:
             yaw_tolerance=self.options.yaw_tolerance,
             elapsed_at_waypoint=now - self.waypoint_started_at,
             waypoint_timeout=self.options.waypoint_timeout,
-            gripper_status=self.gripper.update(self.commander.digital_inputs, now),
+            gripper_status=self._gripper_status(now),
         )
         if decision.kind == ABORT:
             self._finish(follow, False, decision.reason)
@@ -428,6 +447,15 @@ class SimToRealTrial:
         )
         self._advance(now)
 
+    def _gripper_status(self, now: float) -> GripperStatus:
+        return self.gripper.update(
+            self.commander.digital_inputs, now,
+            received_at=self.commander.digital_inputs_received_at,
+            command_accepted=self.commander.gripper_command_accepted(
+                self.gripper.want_closed
+            ),
+        )
+
     def _actuate_gripper(self, follow, now: float) -> None:
         want_closed = follow.gripper >= 0.5
         if not self.options.enable_motion:
@@ -442,10 +470,10 @@ class SimToRealTrial:
             self._advance(now)
             return
         self.commander.send_zero_twist(repeat=1)
-        if self.gripper.update(self.commander.digital_inputs, now).state == "idle":
+        if self._gripper_status(now).state == "idle":
             self.commander.set_gripper(want_closed)
             self.gripper.request(want_closed, now)
-        status = self.gripper.update(self.commander.digital_inputs, now)
+        status = self._gripper_status(now)
         self.controller.write_commanded_gripper_state(
             follow.gripper, self.runtime.sim_dt
         )
