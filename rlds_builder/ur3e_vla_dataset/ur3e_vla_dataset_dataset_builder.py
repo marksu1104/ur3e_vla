@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import hashlib
 import os
 import random
 from typing import Any, Iterator, Tuple
@@ -16,8 +17,9 @@ import tensorflow_hub as hub
 class Ur3eVlaDataset(tfds.core.GeneratorBasedBuilder):
     """DatasetBuilder for UR3e VLA simulation demonstrations."""
 
-    VERSION = tfds.core.Version("1.0.0")
+    VERSION = tfds.core.Version("1.1.0")
     RELEASE_NOTES = {
+        "1.1.0": "Validate scene/action contracts and make source keys and splits deterministic.",
         "1.0.0": "Initial HDF5 RLDS builder.",
     }
 
@@ -103,11 +105,19 @@ class Ur3eVlaDataset(tfds.core.GeneratorBasedBuilder):
 
     def _split_generators(self, dl_manager: tfds.download.DownloadManager):
         h5_paths = self._resolve_h5_paths()
-        demo_refs = [
-            (h5_path, demo_name)
-            for h5_path in h5_paths
-            for demo_name in self._list_demo_names(h5_path)
-        ]
+        demo_refs = []
+        scene_profiles = set()
+        for h5_path in h5_paths:
+            scene_profile, demo_names = self._inspect_h5(h5_path)
+            scene_profiles.add(scene_profile)
+            demo_refs.extend((h5_path, name) for name in demo_names)
+        if len(scene_profiles) != 1:
+            raise ValueError(
+                "Cannot mix scene profiles in one build: "
+                + ", ".join(sorted(scene_profiles))
+            )
+        if not demo_refs:
+            raise ValueError("No successful episodes were found in the selected HDF5 datasets.")
 
         seed = int(os.environ.get("UR3E_VLA_SPLIT_SEED", "42"))
         val_ratio = float(os.environ.get("UR3E_VLA_VAL_RATIO", "0.1"))
@@ -118,7 +128,9 @@ class Ur3eVlaDataset(tfds.core.GeneratorBasedBuilder):
         shuffled = list(demo_refs)
         rng.shuffle(shuffled)
 
-        n_val = int(round(len(shuffled) * val_ratio))
+        n_val = 0
+        if val_ratio > 0.0 and len(shuffled) > 1:
+            n_val = min(len(shuffled) - 1, max(1, round(len(shuffled) * val_ratio)))
         val_refs = set(shuffled[:n_val])
         train_refs = [ref for ref in demo_refs if ref not in val_refs]
         val_refs = [ref for ref in demo_refs if ref in val_refs]
@@ -163,6 +175,8 @@ class Ur3eVlaDataset(tfds.core.GeneratorBasedBuilder):
         action = np.asarray(demo["action"], dtype=np.float32)
         task = self._decode_task(demo["task"][()])
 
+        if len(action) == 0:
+            raise ValueError(f"Empty episode in {demo.name}")
         if not (len(image) == len(hand_image) == len(robot_state) == len(action)):
             raise ValueError(f"Inconsistent step lengths in {demo.name}")
 
@@ -225,15 +239,18 @@ class Ur3eVlaDataset(tfds.core.GeneratorBasedBuilder):
                 "Set UR3E_VLA_H5_PATH=/path/to/demos.h5 or "
                 "UR3E_VLA_H5_PATHS=/path/a.h5,/path/b.h5."
             )
-        return h5_paths
+        # Resolve aliases before de-duplicating, and sort so comma-list ordering
+        # cannot change the seeded episode split.
+        return sorted({path.resolve() for path in h5_paths}, key=str)
 
     @staticmethod
     def _source_id(h5_path: Path) -> str:
-        parent = h5_path.parent.name
-        return parent if parent else h5_path.stem
+        resolved = h5_path.resolve()
+        source_hash = hashlib.sha256(str(resolved).encode("utf-8")).hexdigest()
+        return f"{resolved.parent.name or resolved.stem}-{source_hash}"
 
     @staticmethod
-    def _list_demo_names(h5_path: Path) -> list[str]:
+    def _inspect_h5(h5_path: Path) -> tuple[str, list[str]]:
         try:
             import h5py
         except ImportError as exc:
@@ -244,7 +261,44 @@ class Ur3eVlaDataset(tfds.core.GeneratorBasedBuilder):
         with h5py.File(h5_path, "r") as h5_file:
             if "data" not in h5_file:
                 raise KeyError(f"{h5_path} does not contain a /data group.")
-            return sorted(h5_file["data"].keys(), key=Ur3eVlaDataset._demo_sort_key)
+            profile = Ur3eVlaDataset._decode_task(
+                h5_file.attrs.get("scene_profile", "")
+            )
+            if profile not in {"canonical_scene_v1", "multiview_scene_v1"}:
+                raise ValueError(f"{h5_path}: unsupported scene_profile {profile!r}")
+            encoding = "logical_binary_0_open_1_closed"
+            file_encoding = h5_file.attrs.get("gripper_action_encoding", encoding)
+            if Ur3eVlaDataset._decode_task(file_encoding) != encoding:
+                raise ValueError(
+                    f"{h5_path}: unsupported gripper_action_encoding {file_encoding!r}"
+                )
+            demo_names = []
+            for name in sorted(
+                h5_file["data"].keys(), key=Ur3eVlaDataset._demo_sort_key
+            ):
+                demo = h5_file["data"][name]
+                if not bool(demo.attrs.get("success", True)):
+                    continue
+                demo_profile = Ur3eVlaDataset._decode_task(
+                    demo.attrs.get("scene_profile", profile)
+                )
+                if demo_profile != profile:
+                    raise ValueError(
+                        f"{h5_path}:{name}: scene_profile does not match file profile"
+                    )
+                demo_encoding = Ur3eVlaDataset._decode_task(
+                    demo.attrs.get("gripper_action_encoding", "")
+                )
+                if demo_encoding != encoding:
+                    raise ValueError(
+                        f"{h5_path}:{name}: unsupported gripper_action_encoding {demo_encoding!r}"
+                    )
+                demo_names.append(name)
+            return profile, demo_names
+
+    @staticmethod
+    def _list_demo_names(h5_path: Path) -> list[str]:
+        return Ur3eVlaDataset._inspect_h5(h5_path)[1]
 
     @staticmethod
     def _demo_sort_key(name: str) -> int:

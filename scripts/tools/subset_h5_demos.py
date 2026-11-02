@@ -4,8 +4,10 @@
 from __future__ import annotations
 
 import argparse
+import os
 import random
 from pathlib import Path
+import tempfile
 
 
 def _demo_sort_key(name: str) -> int:
@@ -51,6 +53,10 @@ def main() -> int:
         raise ValueError("--episodes must be positive")
     if not args.input.exists():
         raise FileNotFoundError(args.input)
+    if args.input.resolve() == args.output.resolve() or (
+        args.output.exists() and args.input.samefile(args.output)
+    ):
+        raise ValueError("--input and --output must refer to different files")
     if args.output.exists() and not args.overwrite:
         raise FileExistsError(f"{args.output} already exists; pass --overwrite to replace it")
 
@@ -59,36 +65,49 @@ def main() -> int:
     except ImportError as exc:
         raise RuntimeError("h5py is required. Install it in the active environment.") from exc
 
-    args.output.parent.mkdir(parents=True, exist_ok=True)
-    if args.output.exists():
-        args.output.unlink()
+    temporary_path = None
+    try:
+        with h5py.File(args.input, "r") as src:
+            if "data" not in src or not isinstance(src["data"], h5py.Group):
+                raise KeyError(f"{args.input} does not contain a /data group")
+            demo_names = sorted(src["data"].keys(), key=_demo_sort_key)
+            if args.episodes > len(demo_names):
+                raise ValueError(
+                    f"Requested {args.episodes} demos, but {args.input} only has {len(demo_names)}"
+                )
 
-    with h5py.File(args.input, "r") as src:
-        if "data" not in src:
-            raise KeyError(f"{args.input} does not contain a /data group")
-        demo_names = sorted(src["data"].keys(), key=_demo_sort_key)
-        if args.episodes > len(demo_names):
-            raise ValueError(
-                f"Requested {args.episodes} demos, but {args.input} only has {len(demo_names)}"
+            if args.seed is None:
+                selected = demo_names[: args.episodes]
+            else:
+                rng = random.Random(args.seed)
+                selected = sorted(rng.sample(demo_names, args.episodes), key=_demo_sort_key)
+
+            args.output.parent.mkdir(parents=True, exist_ok=True)
+            descriptor, temporary_name = tempfile.mkstemp(
+                prefix=f".{args.output.name}.", suffix=".tmp", dir=args.output.parent
             )
+            temporary_path = Path(temporary_name)
+            os.close(descriptor)
+            with h5py.File(temporary_path, "w") as dst:
+                for key, value in src.attrs.items():
+                    dst.attrs[key] = value
+                dst.attrs["num_demos"] = len(selected)
+                dst.attrs["subset_source"] = str(args.input)
+                if args.seed is not None:
+                    dst.attrs["subset_seed"] = args.seed
 
-        if args.seed is None:
-            selected = demo_names[: args.episodes]
+                dst_data = dst.create_group("data")
+                for out_idx, demo_name in enumerate(selected):
+                    src.copy(src["data"][demo_name], dst_data, name=f"demo_{out_idx}")
+
+        if args.overwrite:
+            os.replace(temporary_path, args.output)
         else:
-            rng = random.Random(args.seed)
-            selected = sorted(rng.sample(demo_names, args.episodes), key=_demo_sort_key)
-
-        with h5py.File(args.output, "w") as dst:
-            for key, value in src.attrs.items():
-                dst.attrs[key] = value
-            dst.attrs["num_demos"] = len(selected)
-            dst.attrs["subset_source"] = str(args.input)
-            if args.seed is not None:
-                dst.attrs["subset_seed"] = args.seed
-
-            dst_data = dst.create_group("data")
-            for out_idx, demo_name in enumerate(selected):
-                src.copy(src["data"][demo_name], dst_data, name=f"demo_{out_idx}")
+            # Publish atomically without replacing a file created during the copy.
+            os.link(temporary_path, args.output)
+    finally:
+        if temporary_path is not None:
+            temporary_path.unlink(missing_ok=True)
 
     print(f"wrote {len(selected)} demos: {args.output}")
     return 0

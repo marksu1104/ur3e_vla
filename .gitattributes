@@ -1,0 +1,2 @@
+# Unified diffs use a one-space context marker for unchanged blank lines.
+scripts/tools/openvla_ur3e.patch -whitespace

@@ -21,6 +21,7 @@ export_h5_frames.py
 
 import argparse
 import json
+import sys
 from pathlib import Path
 
 import h5py
@@ -48,6 +49,8 @@ def draw_overlay(pil_img: Image.Image, frame_idx: int,
 # ── 匯出圖片 ─────────────────────────────────────────────────────
 def export_images(h5_path: str, demo_keys: list,
                   every_n: int, out_dir: Path):
+    if every_n < 1:
+        raise ValueError("--every-n must be at least 1")
     with h5py.File(h5_path, "r") as f:
         if not demo_keys:
             demo_keys = sorted(f["data"].keys())
@@ -64,7 +67,8 @@ def export_images(h5_path: str, demo_keys: list,
 
             exported = []
             for i in range(0, num_steps, every_n):
-                gripper_raw = float(robot_state[i, 14])
+                # v1 state: joints[0:6], xyz[6:9], quat[9:13], gripper[13], reserved[14].
+                gripper_raw = float(robot_state[i, 13])
                 pil_img = Image.fromarray(images[i])
                 pil_img = draw_overlay(pil_img, i, gripper_raw, demo_key)
 
@@ -95,11 +99,12 @@ def export_images(h5_path: str, demo_keys: list,
 
 # ── 匯出影片 ─────────────────────────────────────────────────────
 def export_videos(h5_path: str, demo_keys: list, out_dir: Path, fps: int = 10):
+    if fps < 1:
+        raise ValueError("--fps must be at least 1")
     try:
         import cv2
-    except ImportError:
-        print("[ERROR] 需要 opencv：pip install opencv-python")
-        return
+    except ImportError as error:
+        raise RuntimeError("opencv-python is required for video export") from error
 
     with h5py.File(h5_path, "r") as f:
         if not demo_keys:
@@ -122,16 +127,19 @@ def export_videos(h5_path: str, demo_keys: list, out_dir: Path, fps: int = 10):
                 fps, (w, h)
             )
 
-            for i in range(num_steps):
-                gripper_raw = float(robot_state[i, 14])
-                pil_img = Image.fromarray(images[i])
-                pil_img = draw_overlay(pil_img, i, gripper_raw, demo_key)
+            try:
+                if not writer.isOpened():
+                    raise RuntimeError(f"failed to open video writer: {out_path}")
+                for i in range(num_steps):
+                    gripper_raw = float(robot_state[i, 13])
+                    pil_img = Image.fromarray(images[i])
+                    pil_img = draw_overlay(pil_img, i, gripper_raw, demo_key)
 
-                # PIL RGB → cv2 BGR
-                frame_bgr = cv2.cvtColor(np.array(pil_img), cv2.COLOR_RGB2BGR)
-                writer.write(frame_bgr)
-
-            writer.release()
+                    # PIL RGB → cv2 BGR
+                    frame_bgr = cv2.cvtColor(np.array(pil_img), cv2.COLOR_RGB2BGR)
+                    writer.write(frame_bgr)
+            finally:
+                writer.release()
             print(f"  [{demo_key}] {num_steps} frames → {out_path}")
 
 
@@ -146,6 +154,10 @@ def main():
     parser.add_argument("--fps",     type=int, default=10, help="影片 fps（預設 10）")
     parser.add_argument("--out-dir", default="./outputs/test/h5_export", help="輸出根目錄")
     args = parser.parse_args()
+    if args.every_n < 1:
+        parser.error("--every-n must be at least 1")
+    if args.fps < 1:
+        parser.error("--fps must be at least 1")
 
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -169,4 +181,8 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except (OSError, ValueError, KeyError, RuntimeError) as error:
+        print(f"FAIL: {error}", file=sys.stderr)
+        raise SystemExit(1)

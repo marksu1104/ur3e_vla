@@ -19,6 +19,40 @@ class EpisodeBuffer:
     timestamps: list = field(default_factory=list)
 
 
+def stack_uint8_images(
+    frames: list,
+    name: str,
+    num_steps: int,
+    *,
+    expected_shape: tuple[int, ...] | None = None,
+) -> np.ndarray:
+    """Return one validated RGB stream without lossy dtype conversion."""
+    try:
+        values = np.asarray(frames)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            f"{name} must have shape (steps, height, width, 3)"
+        ) from exc
+    valid_shape = (
+        values.ndim == 4
+        and values.shape[0] == num_steps
+        and values.shape[1] > 0
+        and values.shape[2] > 0
+        and values.shape[3] == 3
+        and (expected_shape is None or values.shape == expected_shape)
+    )
+    if not valid_shape:
+        shape = expected_shape or (num_steps, "height", "width", 3)
+        raise ValueError(f"{name} must have shape {shape}")
+    if not np.issubdtype(values.dtype, np.number):
+        raise ValueError(f"{name} must contain numeric values")
+    if not np.isfinite(values).all():
+        raise ValueError(f"{name} contains non-finite values")
+    if values.dtype != np.dtype(np.uint8):
+        raise ValueError(f"{name} must have dtype uint8; got {values.dtype}")
+    return values
+
+
 def build_episode_arrays(buffer: EpisodeBuffer, instruction: str) -> dict:
     """Convert an episode buffer into fixed arrays for HDF5 storage."""
     num_steps = len(buffer.ee_poses)
@@ -39,6 +73,12 @@ def build_episode_arrays(buffer: EpisodeBuffer, instruction: str) -> dict:
         if not np.isfinite(values).all():
             raise ValueError(f"{name} contains non-finite values")
 
+    gripper_states = np.asarray(buffer.gripper_states, dtype=np.float64)
+    if gripper_states.shape != (num_steps,):
+        raise ValueError(f"gripper_states must have shape ({num_steps},)")
+    if not np.isfinite(gripper_states).all():
+        raise ValueError("gripper_states contains non-finite values")
+
     raw_actions = [
         np.asarray(action, dtype=np.float32) for action in buffer.actions_7d
     ]
@@ -48,7 +88,7 @@ def build_episode_arrays(buffer: EpisodeBuffer, instruction: str) -> dict:
     for idx in range(num_steps):
         ee_pose = np.asarray(buffer.ee_poses[idx], dtype=np.float32)
         joint_pos = np.asarray(buffer.joint_positions[idx], dtype=np.float32)
-        grip_binary = 1.0 if float(buffer.gripper_states[idx]) > 0.2 else 0.0
+        grip_binary = 1.0 if gripper_states[idx] > 0.2 else 0.0
 
         robot_states.append(
             np.concatenate(
@@ -79,17 +119,33 @@ def build_episode_arrays(buffer: EpisodeBuffer, instruction: str) -> dict:
             ).astype(np.float32)
         )
 
+    main_images = stack_uint8_images(buffer.main_images, "main_images", num_steps)
+    wrist_images = stack_uint8_images(buffer.wrist_images, "wrist_images", num_steps)
+
     return {
-        "image": np.stack(buffer.main_images).astype(np.uint8),
-        "hand_image": np.stack(buffer.wrist_images).astype(np.uint8),
+        "image": main_images,
+        "hand_image": wrist_images,
         "robot_state": np.stack(robot_states).astype(np.float32),
         "action": np.stack(actions).astype(np.float32),
         "task": instruction,
     }
 
 
-def append_episode_h5(h5_path: Path, episode_id: int, buffer: EpisodeBuffer, meta: dict):
-    """Append one episode to a single HDF5 dataset file."""
+def append_episode_h5(
+    h5_path: Path,
+    episode_id: int,
+    buffer: EpisodeBuffer,
+    meta: dict,
+    *,
+    write_extensions=None,
+):
+    """Append one episode, rolling back its writes if Python raises.
+
+    An optional ``write_extensions(group)`` callback may add datasets to the
+    new episode and update the tracked root metadata before the final flush.
+    It must leave existing episodes and other root metadata untouched. This
+    rollback does not provide protection against process or storage failure.
+    """
     try:
         import h5py
     except ImportError as exc:
@@ -99,6 +155,8 @@ def append_episode_h5(h5_path: Path, episode_id: int, buffer: EpisodeBuffer, met
         ) from exc
 
     instruction = str(meta["instruction"])
+    if "\x00" in instruction:
+        raise ValueError("instruction must not contain NULL characters")
     arrays = build_episode_arrays(buffer, instruction)
     h5_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -117,41 +175,58 @@ def append_episode_h5(h5_path: Path, episode_id: int, buffer: EpisodeBuffer, met
                 raise ValueError(
                     f"dataset scene_profile is {existing_profile!r}, not {scene_profile!r}"
                 )
-            h5_file.attrs["scene_profile"] = scene_profile
-        h5_file.attrs.setdefault("schema_version", "v1")
-        h5_file.attrs.setdefault("format", "vla_demo_hdf5")
-        h5_file.attrs.setdefault(
-            "fields", "image, other/hand_image, robot_state, action, task"
-        )
-
         data_group = h5_file.require_group("data")
-        group = data_group.create_group(group_name)
-        other_group = group.create_group("other")
+        root_keys = ("scene_profile", "schema_version", "format", "fields", "num_demos")
+        previous_attrs = {key: h5_file.attrs[key] for key in root_keys if key in h5_file.attrs}
+        try:
+            group = data_group.create_group(group_name)
+            other_group = group.create_group("other")
 
-        group.create_dataset(
-            "image",
-            data=arrays["image"],
-            compression="gzip",
-            compression_opts=4,
-            chunks=(1, *arrays["image"].shape[1:]),
-        )
-        other_group.create_dataset(
-            "hand_image",
-            data=arrays["hand_image"],
-            compression="gzip",
-            compression_opts=4,
-            chunks=(1, *arrays["hand_image"].shape[1:]),
-        )
-        group.create_dataset("robot_state", data=arrays["robot_state"])
-        group.create_dataset("action", data=arrays["action"])
-        group.create_dataset("task", data=arrays["task"], dtype=string_dtype)
+            group.create_dataset(
+                "image",
+                data=arrays["image"],
+                compression="gzip",
+                compression_opts=4,
+                chunks=(1, *arrays["image"].shape[1:]),
+            )
+            other_group.create_dataset(
+                "hand_image",
+                data=arrays["hand_image"],
+                compression="gzip",
+                compression_opts=4,
+                chunks=(1, *arrays["hand_image"].shape[1:]),
+            )
+            group.create_dataset("robot_state", data=arrays["robot_state"])
+            group.create_dataset("action", data=arrays["action"])
+            group.create_dataset("task", data=arrays["task"], dtype=string_dtype)
 
-        for key, value in meta.items():
-            if isinstance(value, (str, int, float, bool, np.integer, np.floating)):
-                group.attrs[key] = value
+            for key, value in meta.items():
+                if isinstance(value, (str, int, float, bool, np.integer, np.floating)):
+                    group.attrs[key] = value
 
-        group.attrs["success"] = bool(meta.get("success", True))
-        h5_file.attrs["num_demos"] = len(data_group)
+            group.attrs["success"] = bool(meta.get("success", True))
+            if scene_profile:
+                h5_file.attrs["scene_profile"] = scene_profile
+            h5_file.attrs.setdefault("schema_version", "v1")
+            h5_file.attrs.setdefault("format", "vla_demo_hdf5")
+            h5_file.attrs.setdefault(
+                "fields", "image, other/hand_image, robot_state, action, task"
+            )
+            if write_extensions is not None:
+                write_extensions(group)
+            h5_file.attrs["num_demos"] = len(data_group)
+            h5_file.flush()
+        except BaseException:
+            # This name was absent before the call; earlier episodes remain intact.
+            if group_name in data_group:
+                del data_group[group_name]
+            for key in root_keys:
+                if key in previous_attrs:
+                    if key not in h5_file.attrs or not np.array_equal(h5_file.attrs[key], previous_attrs[key]):
+                        h5_file.attrs[key] = previous_attrs[key]
+                elif key in h5_file.attrs:
+                    del h5_file.attrs[key]
+            raise
 
 
 class VideoRecorder:

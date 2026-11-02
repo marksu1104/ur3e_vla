@@ -1,18 +1,4 @@
-"""Episode buffer and HDF5 export additions for the three MultiView cameras.
-
-``EpisodeBuffer`` is a plain
-dataclass with 7 required fields and no extension point, and
-``append_episode_h5`` writes a fixed set of datasets, so instead of
-editing either:
-
-- ``MultiviewEpisodeBuffer`` subclasses ``EpisodeBuffer`` and adds three
-  new fields with empty-list defaults, so existing positional/keyword
-  construction of ``EpisodeBuffer`` elsewhere keeps working unchanged.
-- ``append_episode_h5_multiview`` calls the original
-  ``append_episode_h5`` first (writing the 5 core datasets exactly as
-  before), then reopens the same HDF5 group to add
-  ``other/left_image`` and ``other/right_image``.
-"""
+"""MultiView buffers and HDF5 extensions written with the core episode."""
 
 from __future__ import annotations
 
@@ -22,14 +8,16 @@ from pathlib import Path
 import numpy as np
 
 from vla_sim.config import TARGET_KEYS
-from vla_sim.h5_dataset import EpisodeBuffer, append_episode_h5
+from vla_sim.h5_dataset import EpisodeBuffer, append_episode_h5, stack_uint8_images
 
 
 def _empty_pose_lists() -> dict:
     return {name: [] for name in TARGET_KEYS}
+
+
 @dataclass
 class MultiviewEpisodeBuffer(EpisodeBuffer):
-    """EpisodeBuffer plus the two extra third-person camera streams."""
+    """EpisodeBuffer plus three camera streams, object poses and tip positions."""
 
     top_images: list = field(default_factory=list)
     left_images: list = field(default_factory=list)
@@ -44,50 +32,56 @@ def append_episode_h5_multiview(
     buffer: MultiviewEpisodeBuffer,
     meta: dict,
 ) -> None:
-    """Append one episode, including the two extra camera views.
+    """Validate extra observations, then append all five views in one write."""
+    num_steps = len(buffer.ee_poses)
+    main_shape = stack_uint8_images(
+        buffer.main_images, "main_images", num_steps
+    ).shape
 
-    Reuses ``vla_sim.h5_dataset.append_episode_h5`` for the 5 core
-    datasets (image, other/hand_image, robot_state, action, task) so
-    that logic never has to be duplicated/kept in sync by hand, then
-    adds the two new views under the same episode group.
-    """
-    import h5py
+    images = {}
+    for name in ("main", "wrist", "top", "left", "right"):
+        values = stack_uint8_images(
+            getattr(buffer, f"{name}_images"),
+            f"{name}_images",
+            num_steps,
+            expected_shape=main_shape,
+        )
+        if name not in ("main", "wrist"):
+            images[name] = values
 
-    append_episode_h5(h5_path, episode_id, buffer, meta)
+    object_poses = {}
+    for name in TARGET_KEYS:
+        poses = np.asarray(buffer.object_poses.get(name, []), dtype=np.float32)
+        if poses.shape != (num_steps, 7):
+            raise ValueError(f"object_poses/{name} must have shape ({num_steps}, 7)")
+        if not np.isfinite(poses).all():
+            raise ValueError(f"object_poses/{name} contains non-finite values")
+        object_poses[name] = poses
 
-    group_name = f"demo_{episode_id}"
-    with h5py.File(h5_path, "a") as h5_file:
-        other_group = h5_file[f"data/{group_name}/other"]
-        top = np.stack(buffer.top_images).astype(np.uint8)
-        left = np.stack(buffer.left_images).astype(np.uint8)
-        right = np.stack(buffer.right_images).astype(np.uint8)
-        other_group.create_dataset(
-            "top_image", data=top,
-            compression="gzip", compression_opts=4,
-            chunks=(1, *top.shape[1:]),
-        )
-        other_group.create_dataset(
-            "left_image",
-            data=left,
-            compression="gzip",
-            compression_opts=4,
-            chunks=(1, *left.shape[1:]),
-        )
-        other_group.create_dataset(
-            "right_image",
-            data=right,
-            compression="gzip",
-            compression_opts=4,
-            chunks=(1, *right.shape[1:]),
-        )
-        obj_group = h5_file.require_group(f"data/{group_name}/object_poses")
-        for name in TARGET_KEYS:
-            poses = np.asarray(buffer.object_poses[name], dtype=np.float32)
+    tip_positions = np.asarray(buffer.gripper_tip_positions, dtype=np.float32)
+    if tip_positions.shape != (num_steps, 3):
+        raise ValueError(f"gripper_tip_positions must have shape ({num_steps}, 3)")
+    if not np.isfinite(tip_positions).all():
+        raise ValueError("gripper_tip_positions contains non-finite values")
+
+    def write_extensions(group):
+        other_group = group["other"]
+        for name, values in images.items():
+            other_group.create_dataset(
+                f"{name}_image", data=values,
+                compression="gzip", compression_opts=4,
+                chunks=(1, *values.shape[1:]),
+            )
+        obj_group = group.create_group("object_poses")
+        for name, poses in object_poses.items():
             obj_group.create_dataset(name, data=poses)
-        tip_pos = np.asarray(buffer.gripper_tip_positions, dtype=np.float32)
-        h5_file[f"data/{group_name}"].create_dataset("gripper_tip_position", data=tip_pos)
-        h5_file.attrs["fields"] = (
+        group.create_dataset("gripper_tip_position", data=tip_positions)
+        group.file.attrs["fields"] = (
             "image, other/hand_image, other/top_image, other/left_image, other/right_image, "
             "object_poses/<red_mug|spoon|bowl> (per-step, xyz+wxyz quat), "
-            "robot_state, action, task"
+            "gripper_tip_position, robot_state, action, task"
         )
+
+    append_episode_h5(
+        h5_path, episode_id, buffer, meta, write_extensions=write_extensions
+    )
