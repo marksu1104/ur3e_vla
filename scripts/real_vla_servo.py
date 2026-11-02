@@ -3,7 +3,9 @@
 
 import argparse
 from pathlib import Path
+import queue
 import sys
+import threading
 import time
 
 import numpy as np
@@ -36,12 +38,16 @@ def parse_args():
     parser.add_argument("--publish-rate-hz", type=float, default=10.0)
     parser.add_argument("--duration", type=float, default=3.0)
     parser.add_argument("--timeout", type=float, default=10.0)
+    parser.add_argument("--image-timeout", type=float, default=0.5,
+                        help="Maximum age of the latest received camera frame, in seconds.")
+    parser.add_argument("--action-timeout", type=float, default=1.5,
+                        help="Maximum action age measured from its input frame reception, in seconds.")
     parser.add_argument("--linear-gain", type=float, default=1.0)
     parser.add_argument("--angular-gain", type=float, default=0.0)
     parser.add_argument("--max-linear-speed", type=float, default=0.01)
     parser.add_argument("--max-angular-speed", type=float, default=0.03)
     parser.add_argument("--allow-high-speed", action="store_true",
-                        help="Allow max-linear-speed above the conservative safety cap.")
+                        help="Compatibility flag; speed is limited by --max-linear-speed.")
     parser.add_argument("--smoothing-alpha", type=float, default=1.0,
                         help="Low-pass command update. 1.0 disables smoothing; 0.2 is conservative.")
     parser.add_argument("--diagnostics", action="store_true",
@@ -53,7 +59,34 @@ def parse_args():
                         help="UR digital output pin number driving the gripper.")
     parser.add_argument("--gripper-close-threshold", type=float, default=0.5,
                         help="VLA action[6] value above which the gripper is commanded closed.")
-    return parser.parse_args()
+    args = parser.parse_args()
+    for name in ("query_rate_hz", "publish_rate_hz", "duration", "timeout", "image_timeout", "action_timeout"):
+        value = getattr(args, name)
+        if not np.isfinite(value) or value <= 0:
+            parser.error(f"--{name.replace('_', '-')} must be finite and positive")
+    for name in ("linear_gain", "angular_gain"):
+        if not np.isfinite(getattr(args, name)):
+            parser.error(f"--{name.replace('_', '-')} must be finite")
+    for name in ("max_linear_speed", "max_angular_speed"):
+        value = getattr(args, name)
+        if not np.isfinite(value) or value < 0:
+            parser.error(f"--{name.replace('_', '-')} must be finite and nonnegative")
+    for name in ("smoothing_alpha", "gripper_close_threshold"):
+        value = getattr(args, name)
+        if not np.isfinite(value) or not 0 <= value <= 1:
+            parser.error(f"--{name.replace('_', '-')} must be between zero and one")
+    if args.gripper_io_pin < 0:
+        parser.error("--gripper-io-pin must be nonnegative")
+    return args
+
+
+def _is_fresh(received_at, now, timeout):
+    return (
+        received_at is not None
+        and np.isfinite(received_at)
+        and np.isfinite(now)
+        and 0 <= now - received_at <= timeout
+    )
 
 
 def _limit_norm(vec: np.ndarray, max_norm: float) -> np.ndarray:
@@ -73,6 +106,7 @@ class RealVLAServo(Node):
         self.client = VLAClient(args.vla_server, timeout=args.timeout)
         self.latest_rgb = None
         self.last_action = np.zeros(7, dtype=np.float32)
+        self.last_action_time = None
         self.last_cmd_linear = np.zeros(3, dtype=np.float32)
         self.last_cmd_angular = np.zeros(3, dtype=np.float32)
         self.last_image_time = None
@@ -85,6 +119,10 @@ class RealVLAServo(Node):
         self.query_count = 0
         self.publish_count = 0
         self.last_gripper_sent = None
+        self._prediction_result = queue.Queue(maxsize=1)
+        self._prediction_thread = None
+        self._stopping = False
+        self._hold_reason = None
 
         self.gripper_client = self.create_client(SetIO, args.gripper_io_service)
         self.gripper_available = self.gripper_client.wait_for_service(timeout_sec=3.0)
@@ -124,6 +162,8 @@ class RealVLAServo(Node):
 
         if not self.client.health_check(log=lambda msg: self.get_logger().info(msg)):
             self.get_logger().warning("VLA server health check failed; continuing.")
+        # Duration measures the control session, not IO/model startup waits.
+        self.started_at = time.monotonic()
 
     def _on_image(self, msg: Image):
         try:
@@ -179,29 +219,48 @@ class RealVLAServo(Node):
         self.last_joint_pos = pos
         self.last_joint_time = time.monotonic()
 
-    def _query_vla(self):
-        if self.latest_rgb is None:
-            self.get_logger().info("Waiting for image...")
-            return
-        if time.monotonic() - self.started_at > self.args.duration:
-            return
+    def _hold_motion(self, reason):
+        self.last_cmd_linear = np.zeros(3, dtype=np.float32)
+        self.last_cmd_angular = np.zeros(3, dtype=np.float32)
+        self.last_action_time = None
+        self._send_zero()
+        if reason != self._hold_reason:
+            self.get_logger().warning(reason)
+        self._hold_reason = reason
 
-        errors_before = self.client.stats["errors"]
-        action = self.client.predict(
-            self.latest_rgb,
-            self.args.instruction,
-            unnorm_key=self.args.unnorm_key,
-            log=lambda msg: self.get_logger().info(msg),
-        )
-        self.last_action = action
-        if self.client.stats["errors"] > errors_before:
-            # A zero fallback must bypass smoothing; otherwise an old velocity
-            # survives a failed request. Do not issue a new gripper command.
-            self.last_cmd_linear = np.zeros(3, dtype=np.float32)
-            self.last_cmd_angular = np.zeros(3, dtype=np.float32)
-            self._send_zero()
-            self.get_logger().warning("VLA query failed; cleared motion and held the gripper command.")
+    def _finish_duration(self):
+        if not self._stopping:
+            self._stopping = True
+            self._hold_motion("Reached duration; held gripper and stopped motion.")
+            if rclpy.ok():
+                rclpy.shutdown()
+
+    def _poll_prediction(self):
+        try:
+            observed_at, action, error, messages = self._prediction_result.get_nowait()
+        except queue.Empty:
             return
+        self._prediction_thread = None
+        if self._stopping:
+            return
+        now = time.monotonic()
+        if now - self.started_at >= self.args.duration:
+            self._finish_duration()
+            return
+        if not _is_fresh(self.last_image_time, now, self.args.image_timeout):
+            self._hold_motion("Camera frame expired; discarded prediction and held gripper.")
+            return
+        if not _is_fresh(observed_at, now, self.args.action_timeout):
+            self._hold_motion("Prediction expired; held gripper and stopped motion.")
+            return
+        for message in messages:
+            self.get_logger().info(message)
+        if error is not None:
+            self._hold_motion(f"VLA query failed; cleared motion and held gripper: {error}")
+            return
+        self.last_action = action.copy()
+        self.last_action_time = observed_at
+        self._hold_reason = None
 
         linear = _limit_norm(action[:3] * self.args.linear_gain, self.args.max_linear_speed)
         angular = _limit_norm(action[3:6] * self.args.angular_gain, self.args.max_angular_speed)
@@ -221,6 +280,44 @@ class RealVLAServo(Node):
             f"cmd_angular={np.round(angular, 5).tolist()} "
             f"gripper={'closed' if gripper_closed else 'open'} ({action[6]:.3f})"
         )
+
+    def _query_vla(self):
+        if self._stopping:
+            return
+        self._poll_prediction()
+        now = time.monotonic()
+        if self._stopping:
+            return
+        if now - self.started_at >= self.args.duration:
+            self._finish_duration()
+            return
+        if self.latest_rgb is None or not _is_fresh(self.last_image_time, now, self.args.image_timeout):
+            self._hold_motion("Waiting for a fresh camera frame; held gripper.")
+            return
+        if self._prediction_thread is not None:
+            return
+
+        # Snapshot all worker inputs. Only the main callbacks apply commands;
+        # slow HTTP must not block the publisher's freshness/deadline checks.
+        rgb = self.latest_rgb.copy()
+        observed_at = self.last_image_time
+        client = self.client
+        instruction, key = self.args.instruction, self.args.unnorm_key
+        results = self._prediction_result
+
+        def predict():
+            messages = []
+            try:
+                errors_before = client.stats["errors"]
+                action = client.predict(rgb, instruction, unnorm_key=key, log=messages.append)
+                error = "failed response" if client.stats["errors"] > errors_before else None
+            except Exception as exc:
+                action, error = None, f"{type(exc).__name__}: {exc}"
+            results.put_nowait((observed_at, action, error, messages))
+
+        self._prediction_thread = threading.Thread(target=predict, daemon=True)
+        self._prediction_thread.start()
+        self._poll_prediction()
 
 
     def _print_diagnostics(self):
@@ -256,13 +353,21 @@ class RealVLAServo(Node):
         )
 
     def _publish_servo(self):
-        elapsed = time.monotonic() - self.started_at
-        if elapsed > self.args.duration:
-            self._send_zero()
-            self.get_logger().info("Reached duration; sent zero command and shutting down.")
-            rclpy.shutdown()
+        if self._stopping:
             return
-
+        self._poll_prediction()
+        now = time.monotonic()
+        if self._stopping:
+            return
+        if now - self.started_at >= self.args.duration:
+            self._finish_duration()
+            return
+        if not _is_fresh(self.last_image_time, now, self.args.image_timeout):
+            self._hold_motion("Camera frame expired; held gripper and stopped motion.")
+            return
+        if not _is_fresh(self.last_action_time, now, self.args.action_timeout):
+            self._hold_motion("Action expired; held gripper and stopped motion.")
+            return
         if not self.args.enable_motion:
             return
 
@@ -294,22 +399,24 @@ class RealVLAServo(Node):
 
 def main():
     args = parse_args()
-    # if args.max_linear_speed > 0.05 and not args.allow_high_speed:
-    #     print(
-    #         f"[SAFETY] Requested --max-linear-speed {args.max_linear_speed:.3f} m/s is high. "
-    #         "Clamping to 0.05 m/s. Pass --allow-high-speed only after confirming safety."
-    #     )
-    #     args.max_linear_speed = 0.05
     rclpy.init()
-    node = RealVLAServo(args)
+    node = None
     try:
+        node = RealVLAServo(args)
         rclpy.spin(node)
     except KeyboardInterrupt:
-        node._send_zero()
+        pass
     finally:
-        node.destroy_node()
-        if rclpy.ok():
-            rclpy.shutdown()
+        try:
+            if node is not None:
+                node._stopping = True
+                try:
+                    node._send_zero()
+                finally:
+                    node.destroy_node()
+        finally:
+            if rclpy.ok():
+                rclpy.shutdown()
 
 
 if __name__ == "__main__":

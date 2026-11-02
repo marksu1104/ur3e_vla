@@ -1,6 +1,6 @@
 # UR3e Real Robot VLA Runbook
 
-Updated 2026-10-30. The user confirmed on 2026-10-14 that a real gripper is
+Updated 2026-11-03. The user confirmed on 2026-10-14 that a real gripper is
 installed and VLA has been tried on hardware: alignment is possible, but lifting
 the object remains difficult. Reliable grasping has not been established. The
 commands below describe the existing test interface; this update ran no robot
@@ -256,15 +256,30 @@ TCP, actual inference latency and real camera placement before attributing poor
 grasping to the model. No gains, rate defaults or action conversion were changed
 in this update; this difference has not been established as the cause of failure.
 
-CPU-only regressions now check that failed inference clears residual smoothed
+CPU-only regressions check that failed inference clears residual smoothed
 velocity and sends zero through the existing motion gate without issuing a new
 gripper request. The next valid prediction can recover. `SetIO` rejection or a
 failed future is logged as failure and permits the matching gripper request to
 be retried; a delayed failure cannot clear a newer opposite command's cache.
 An accepted IO request does not itself prove a physical grasp.
 
-Still pending: camera/action freshness stopping, handling interrupted inference
-and shutdown, workspace/table limits, and integration of physical grasp feedback
-with VLA task completion. These CPU checks do not validate physical stopping or
-grasping. The scripted synchronization path has its own DI feedback and timeout
-logic and remains limited to `obj=1, dest=2`.
+HTTP inference now runs in at most one daemon worker with a copied image; the
+worker never accesses ROS commands or logging. Main callbacks remain free to
+check duration and freshness while inference is pending. Default `--image-timeout`
+is 0.5 seconds since the latest image callback; `--action-timeout` is 1.5 seconds
+since the input frame callback, not since the response arrived. Stale or late
+results cannot refresh velocity or issue a gripper command. A new valid result
+can resume after a hold. Duration starts after initialization; its deadline is
+checked before submitting and consuming predictions and on each publish tick.
+Normal shutdown and unexpected spin exceptions send zero before destroying the
+node, without waiting for HTTP completion. Numeric rates/timeouts must be finite
+and positive, gains finite, and limits nonnegative. Signed gains remain supported.
+`--allow-high-speed` is retained for compatibility; the explicit speed limit is
+`--max-linear-speed`, with no additional implicit cap.
+
+Freshness uses local monotonic callback reception, not camera capture time or
+ROS header synchronization. Workspace/table limits and integration of physical
+grasp feedback with VLA task completion remain pending. These CPU checks do not
+validate ROS scheduling, physical stopping or grasping. The scripted synchronization
+path has separate accepted-command and fresh-DI checks and remains limited to
+`obj=1, dest=2`.
