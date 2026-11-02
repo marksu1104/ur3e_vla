@@ -1,6 +1,6 @@
 # 歷史驗證紀錄
 
-六份舊快照已合併；這裡僅用來追查當時結果，現行操作請看 [完整指令](../command_reference.md)，現況請看 [驗收清單](../acceptance.md)。旧前檢與第一次 Remote 長測的 JSON 已合併到各組 history.json；一次性腳本已由正式工具、tests 和現行指令取代。
+六份舊快照已合併；這裡僅用來追查當時結果，現行操作請看 [完整指令](../command_reference.md)，Remote 範圍請看 [實驗前確認](../remote_readiness.md)；本機交接計畫 `docs/acceptance.md` 已被 Git 忽略。旧前檢與第一次 Remote 長測的 JSON 已合併到各組 history.json；一次性腳本已由正式工具、tests 和現行指令取代。
 
 <a id="2026-10-03-manual-checklist"></a>
 

@@ -55,7 +55,8 @@ or model exports. See `docs/command_reference.md` for direct-write examples.
 - Group test outputs by purpose, not by an unlabelled miscellaneous archive.
   Keep the evidence needed for current acceptance; remove superseded smoke
   tests after review. Use a separately managed backup for valuable H5/models.
-  Latest evidence is linked from `docs/acceptance.md` and `docs/remote_readiness.md`.
+  Public Remote evidence is linked from `docs/remote_readiness.md`; the local
+  handoff plan in `docs/acceptance.md` is Git-ignored.
   Old reports are consolidated in each group's ignored `history.json`; the
   existing `relocation_manifest.json` records path changes and cleanup.
 - Direct new runs to distinct paths. Avoid `--overwrite` unless deliberately
@@ -99,7 +100,8 @@ from changing collection, VLA, synchronization, or MultiView unexpectedly.
 for external checkouts and cell-specific connections. `docs/local_commands.md`
 is an ignored private copy with this workstation's concrete paths and connection
 settings; it is not copied by a new Git clone. `docs/shared_environment.md` is
-also ignored and documents local runtime administration. Transfer these private
+also ignored and documents local runtime administration. The agent handoff
+plan `docs/acceptance.md` is private and ignored as well. Transfer these private
 files separately when handing over this workstation, rather than publishing
 them. All operational entry points and their CLI parameters remain in `scripts/`.
 

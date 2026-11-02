@@ -23,3 +23,6 @@ scripts/tools/setup_shared_workstation.sh
 
 # Private, directly usable workstation commands and connection settings.
 docs/local_commands.md
+
+# Local agent handoff plan; keep the file on this workstation only.
+docs/acceptance.md

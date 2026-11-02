@@ -936,7 +936,7 @@ rm -rf ~/IsaacLab/ur3e_vla/outputs/test/full_test
 
 ## 測試結果紀錄
 
-目前狀態與人工驗收順序統一記在 [acceptance.md](acceptance.md)，Remote
+本機交接計畫與人工驗收順序記在 `acceptance.md`（Git 忽略，需另行私下交接），Remote
 實驗使用 [remote_readiness.md](remote_readiness.md)。舊 commit、舊測試數與
 專項補測只在 [歷史驗證紀錄](archive/validation_history.md) 保留供追查。
 以下是完整驗收範圍，不能因部分短測通過就全部勾選。
