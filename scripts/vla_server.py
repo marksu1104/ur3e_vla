@@ -279,12 +279,16 @@ def predict(req: PredictRequest):
                 pass
             raise HTTPException(status_code=500, detail=f"Inference failed: {e}")
 
-    if hasattr(action, "cpu"):
-        action_np = action.cpu().numpy()
-    else:
-        action_np = np.array(action)
-
-    action_np = action_np.flatten()[:7]
+    try:
+        if hasattr(action, "cpu"):
+            action = action.cpu().numpy()
+        action_np = np.asarray(action, dtype=np.float32).flatten()
+        if action_np.size != 7:
+            raise ValueError(f"expected 7 action values, got {action_np.size}")
+        if not np.isfinite(action_np).all():
+            raise ValueError("action contains non-finite values")
+    except (TypeError, ValueError, OverflowError) as e:
+        raise HTTPException(status_code=500, detail=f"Invalid model action: {e}")
 
     latency_ms = (time.monotonic() - t0) * 1000
 

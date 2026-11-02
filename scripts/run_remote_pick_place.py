@@ -177,7 +177,6 @@ def main() -> None:
         while app.is_running():
             command = bridge.poll_command()
             if command is not None:
-                bridge.command_applied(command)
                 if command["type"] == "task" and state == "waiting":
                     trial = command
                     target = scene[command["object"]]
@@ -269,6 +268,10 @@ def main() -> None:
                         frozen_quat = EE_ORIENT_DOWN
                         logical_grip = 0.0
                         bridge.set_state("resetting", seed=seed)
+
+                # Keep the reservation until local and published state agree.
+                # A failed transition stays reserved until the bridge shuts down.
+                bridge.command_applied(command)
 
             if state == "running" and player is not None:
                 run_t += sim_dt

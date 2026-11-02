@@ -50,10 +50,14 @@ def main() -> None:
         )
     if _extra_args.vla_step_interval < 1:
         raise ValueError("--vla-step-interval must be at least 1")
+    if not np.isfinite(_extra_args.action_scale) or _extra_args.action_scale < 0:
+        raise ValueError("--action-scale must be finite and nonnegative")
+    if _extra_args.max_steps < 0:
+        raise ValueError("--max-steps must be nonnegative (0 runs until stopped)")
 
     vla = VLAClient(_extra_args.vla_server, timeout=_extra_args.vla_timeout)
     if not vla.health_check(log):
-        log("[VLA] server unavailable; the last zero action will be reused.")
+        raise RuntimeError("VLA server is unavailable or not ready")
 
     runtime = SimulationRuntime(
         RuntimeOptions(scene_profile="vla", device=args_cli.device)
@@ -77,11 +81,13 @@ def main() -> None:
     last_action_id = 0
     applied_action_id = 0
     vla_pending = False
+    prediction_worker = None
+    prediction_error = None
     action_lock = threading.Lock()
     last_log_at = time.monotonic()
 
     def start_prediction(rgb: np.ndarray) -> None:
-        nonlocal last_action, last_action_id, vla_pending
+        nonlocal last_action, last_action_id, vla_pending, prediction_error
         try:
             action = clamp_action(
                 vla.predict(
@@ -94,6 +100,9 @@ def main() -> None:
             with action_lock:
                 last_action = action
                 last_action_id += 1
+        except Exception as error:
+            with action_lock:
+                prediction_error = error
         finally:
             with action_lock:
                 vla_pending = False
@@ -103,6 +112,7 @@ def main() -> None:
         f"rate={60 / _extra_args.vla_step_interval:.1f}Hz"
     )
     step = 0
+    interrupted = False
     try:
         while app.is_running():
             if step % _extra_args.vla_step_interval == 0:
@@ -114,11 +124,13 @@ def main() -> None:
                         if should_start:
                             vla_pending = True
                     if should_start:
-                        threading.Thread(
+                        prediction_worker = threading.Thread(
                             target=start_prediction, args=(rgb,), daemon=True
-                        ).start()
+                        )
+                        prediction_worker.start()
 
             with action_lock:
+                worker_error = prediction_error
                 action = (
                     last_action.copy()
                     if last_action_id > applied_action_id
@@ -126,6 +138,8 @@ def main() -> None:
                 )
                 if action is not None:
                     applied_action_id = last_action_id
+            if worker_error is not None:
+                raise RuntimeError("VLA prediction worker failed") from worker_error
             if action is not None and np.any(action):
                 next_pos, next_quat, next_grip = apply_delta_action(
                     ee_target_pos,
@@ -162,9 +176,28 @@ def main() -> None:
             if _extra_args.max_steps > 0 and step >= _extra_args.max_steps:
                 break
     except KeyboardInterrupt:
+        interrupted = True
         log("Ctrl+C received.")
     finally:
-        log(f"VLA stats: {vla.stats}")
+        if prediction_worker is not None:
+            prediction_worker.join(timeout=vla.timeout + 1.0)
+        log(f"VLA stats: {vla.stats} consumed_actions={applied_action_id}")
+
+    if not interrupted and _extra_args.max_steps > 0:
+        if prediction_error is not None:
+            raise RuntimeError("VLA prediction worker failed") from prediction_error
+        if prediction_worker is not None and prediction_worker.is_alive():
+            raise RuntimeError("VLA prediction did not finish before shutdown")
+        if step < _extra_args.max_steps:
+            raise RuntimeError(
+                f"VLA rollout stopped early: steps={step} expected={_extra_args.max_steps}"
+            )
+        stats = vla.stats
+        if stats["requests"] == 0 or stats["errors"] or applied_action_id == 0:
+            raise RuntimeError(
+                f"VLA rollout incomplete: requests={stats['requests']} "
+                f"errors={stats['errors']} consumed_actions={applied_action_id}"
+            )
 
 
 if __name__ == "__main__":

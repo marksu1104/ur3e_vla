@@ -157,9 +157,13 @@ class RealVLAServo(Node):
 
     def _on_gripper_response(self, future, value):
         try:
-            future.result()
+            response = future.result()
+            if response is None or not response.success:
+                raise RuntimeError("SetIO rejected the gripper request")
             self.get_logger().info(f"[Gripper] DO_{self.args.gripper_io_pin} set to {value:.0f}")
         except Exception as exc:
+            if self.last_gripper_sent == value:
+                self.last_gripper_sent = None
             self.get_logger().warning(f"[Gripper] SetIO failed: {type(exc).__name__}: {exc}")
 
     def _on_controller_cmd(self, msg: Float64MultiArray):
@@ -182,6 +186,7 @@ class RealVLAServo(Node):
         if time.monotonic() - self.started_at > self.args.duration:
             return
 
+        errors_before = self.client.stats["errors"]
         action = self.client.predict(
             self.latest_rgb,
             self.args.instruction,
@@ -189,6 +194,14 @@ class RealVLAServo(Node):
             log=lambda msg: self.get_logger().info(msg),
         )
         self.last_action = action
+        if self.client.stats["errors"] > errors_before:
+            # A zero fallback must bypass smoothing; otherwise an old velocity
+            # survives a failed request. Do not issue a new gripper command.
+            self.last_cmd_linear = np.zeros(3, dtype=np.float32)
+            self.last_cmd_angular = np.zeros(3, dtype=np.float32)
+            self._send_zero()
+            self.get_logger().warning("VLA query failed; cleared motion and held the gripper command.")
+            return
 
         linear = _limit_norm(action[:3] * self.args.linear_gain, self.args.max_linear_speed)
         angular = _limit_norm(action[3:6] * self.args.angular_gain, self.args.max_angular_speed)

@@ -21,6 +21,9 @@ class VLAClient:
     """Small client used by the Isaac Lab simulation process."""
 
     def __init__(self, server_url: str, timeout: float = 2.0):
+        timeout = float(timeout)
+        if not np.isfinite(timeout) or timeout <= 0:
+            raise ValueError("timeout must be finite and greater than zero")
         self.server_url = server_url.rstrip("/")
         self.timeout = timeout
         self._last_action = np.zeros(7, dtype=np.float32)
@@ -30,7 +33,7 @@ class VLAClient:
     def health_check(self, log=print) -> bool:
         """Return True when the server is reachable and the model is ready."""
         try:
-            response = requests.get(f"{self.server_url}/health", timeout=5.0)
+            response = requests.get(f"{self.server_url}/health", timeout=self.timeout)
             response.raise_for_status()
             data = response.json()
             log(f"[VLA] Server status: {data['status']}")
@@ -48,7 +51,12 @@ class VLAClient:
         unnorm_key: str = "ur3e_vla_dataset",
         log=print,
     ) -> np.ndarray:
-        """Send an RGB image and instruction, then return a 7D action."""
+        """Return a finite 7D action, or zero motion with the last valid grip.
+
+        Actions describe deltas, so replaying an earlier response after a
+        timeout would apply the same movement again. Preserve the gripper
+        command so a failed prediction does not release a held object.
+        """
         self._request_count += 1
         t0 = time.monotonic()
 
@@ -66,7 +74,11 @@ class VLAClient:
             data = response.json()
 
             action = np.array(data["action"], dtype=np.float32)
-            self._last_action = action
+            if action.shape != (7,):
+                raise ValueError(f"Expected action shape (7,), got {action.shape}")
+            if not np.isfinite(action).all():
+                raise ValueError("action contains non-finite values")
+            self._last_action = action.copy()
             latency = data.get("latency_ms", (time.monotonic() - t0) * 1000)
 
             if self._request_count % 10 == 0:
@@ -82,10 +94,13 @@ class VLAClient:
             self._error_count += 1
             if self._error_count <= 5 or self._error_count % 20 == 0:
                 log(f"[VLA] predict failed (#{self._error_count}): {exc}")
-            return self._last_action.copy()
+            held_action = np.zeros(7, dtype=np.float32)
+            held_action[6] = self._last_action[6]
+            return held_action
 
     @property
     def stats(self):
+        """Count prediction attempts, including failed encoding or responses."""
         return {
             "requests": self._request_count,
             "errors": self._error_count,

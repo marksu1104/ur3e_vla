@@ -539,8 +539,8 @@ def run_sim_to_real(
                 last_heartbeat = now
             command = bridge.poll_command()
             if command is not None:
-                bridge.command_applied(command)
                 trial.handle_command(command, now)
+                bridge.command_applied(command)
             trial.step(now, step)
             runtime.step()
             if step % stream_every == 0:

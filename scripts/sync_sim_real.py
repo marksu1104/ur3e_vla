@@ -197,6 +197,7 @@ def main() -> None:
         jpeg_quality=quality,
         allow_tasks=sim_to_real,
         allowed_task_pairs={SUPPORTED_TASK_PAIR} if sim_to_real else None,
+        allowed_controls={"reset"} if sim_to_real else None,
     )
     bridge.start()
     bridge.set_state("starting")
@@ -261,10 +262,10 @@ def main() -> None:
             subscriber.spin_once()
             command = bridge.poll_command()
             if command is not None:
-                bridge.command_applied(command)
                 state, seed = _apply_real_to_sim_control(
                     command, runtime, backend, bridge, state, seed
                 )
+                bridge.command_applied(command)
 
             runtime.step()
             snapshot = backend.status

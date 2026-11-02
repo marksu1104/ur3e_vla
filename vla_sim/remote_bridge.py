@@ -17,6 +17,7 @@ import uvicorn
 from fastapi import Body, FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 
 PROTOCOL_VERSION = 1
+CONTROL_ACTIONS = frozenset({"pause", "resume", "reset"})
 
 
 @dataclass
@@ -49,6 +50,7 @@ class BridgeServer:
         jpeg_quality: int = 85,
         allow_tasks: bool = True,
         allowed_task_pairs: set[tuple[int, int]] | None = None,
+        allowed_controls: set[str] | frozenset[str] | None = None,
     ):
         self.task_names = {
             int(key): str(value) for key, value in task_names.items()
@@ -66,6 +68,17 @@ class BridgeServer:
                 for task_index, position_index in allowed_task_pairs
             }
         )
+        self.allowed_controls = (
+            CONTROL_ACTIONS
+            if allowed_controls is None
+            else frozenset(allowed_controls)
+        )
+        invalid_controls = self.allowed_controls - CONTROL_ACTIONS
+        if invalid_controls:
+            raise ValueError(
+                "allowed_controls contains unknown actions: "
+                f"{sorted(invalid_controls, key=repr)}"
+            )
 
         self._status_lock = threading.Lock()
         self._status: dict[str, Any] = {
@@ -178,7 +191,7 @@ class BridgeServer:
         @app.post("/control")
         async def control(payload: dict[str, Any] = Body(...)):
             action = payload.get("action")
-            if action not in {"pause", "resume", "reset"}:
+            if not isinstance(action, str) or action not in CONTROL_ACTIONS:
                 raise HTTPException(
                     status_code=400,
                     detail="action must be pause, resume, or reset",
@@ -325,6 +338,11 @@ class BridgeServer:
 
     def _reserve_control(self, action: str, seed: int | None) -> None:
         with self._status_lock:
+            if action not in self.allowed_controls:
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"{action} is unavailable in this mode",
+                )
             state = self._status["state"]
             if self._pending_command is not None:
                 raise HTTPException(
