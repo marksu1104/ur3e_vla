@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+
 import numpy as np
 
 from vla_sim.config import (
@@ -18,6 +20,53 @@ from vla_sim.config import (
 ARM_SPEED_MPS = 0.20
 GRIPPER_SPEED_RAD_S = 0.75
 GRIPPER_CLOSED = 1.0
+
+TRIAL_OUTCOME_FIELDS = (
+    "pipeline_ok",
+    "trajectory_complete",
+    "grasped",
+    "lifted",
+    "transported_without_drop",
+    "released",
+    "placed",
+)
+PHYSICAL_OUTCOME_FIELDS = TRIAL_OUTCOME_FIELDS[2:]
+
+
+def classify_trial_outcome(evidence: Mapping[str, object]) -> dict[str, object]:
+    """Classify explicit per-trial evidence without promoting missing evidence.
+
+    Each stage must be recorded as ``True``, ``False`` or ``None`` (unknown).
+    Process exit codes, HTTP status codes and bridge ``complete`` events are not
+    stage evidence and are intentionally ignored.
+    """
+    if not isinstance(evidence, Mapping):
+        raise TypeError("trial evidence must be a mapping")
+
+    stages = {}
+    for field in TRIAL_OUTCOME_FIELDS:
+        value = evidence.get(field)
+        if value is not None and type(value) is not bool:
+            raise ValueError(f"{field} must be True, False or None")
+        stages[field] = (
+            "unknown" if value is None else "pass" if value else "fail"
+        )
+
+    def combined(fields: tuple[str, ...]) -> str:
+        states = [stages[field] for field in fields]
+        if "fail" in states:
+            return "fail"
+        if all(state == "pass" for state in states):
+            return "pass"
+        return "unknown"
+
+    return {
+        "pipeline": stages["pipeline_ok"],
+        "trajectory": stages["trajectory_complete"],
+        "physical_pick_place": combined(PHYSICAL_OUTCOME_FIELDS),
+        "end_to_end": combined(TRIAL_OUTCOME_FIELDS),
+        "stages": stages,
+    }
 
 
 def _quat_mul(q1, q2):
