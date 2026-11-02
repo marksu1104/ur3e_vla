@@ -15,7 +15,7 @@ import uuid
 
 
 PROJECT = Path(__file__).resolve().parents[2]
-MINIMUM_UNIT_TESTS = 142
+MINIMUM_UNIT_TESTS = 191
 
 
 def file_sha256(path: Path) -> str:

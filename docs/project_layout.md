@@ -105,7 +105,7 @@ them. All operational entry points and their CLI parameters remain in `scripts/`
 
 ## Tests and Tools
 
-`tests/` has 16 modules and 142 CPU regression tests. They protect H5/MultiView
+`tests/` has 16 modules and 191 CPU regression tests. They protect H5/MultiView
 writing, TFDS conversion, Remote and synchronization command handling, VLA
 client/server/rollout, scene options, startup/shutdown, and the OpenVLA patch.
 Keep these sources; run `CUDA_VISIBLE_DEVICES='' python -m unittest discover -s tests -q`

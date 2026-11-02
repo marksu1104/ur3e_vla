@@ -17,8 +17,9 @@ import tensorflow_hub as hub
 class Ur3eVlaDataset(tfds.core.GeneratorBasedBuilder):
     """DatasetBuilder for UR3e VLA simulation demonstrations."""
 
-    VERSION = tfds.core.Version("1.1.0")
+    VERSION = tfds.core.Version("1.1.1")
     RELEASE_NOTES = {
+        "1.1.1": "Reject invalid stored arrays before embedding or dtype conversion.",
         "1.1.0": "Validate scene/action contracts and make source keys and splits deterministic.",
         "1.0.0": "Initial HDF5 RLDS builder.",
     }
@@ -169,16 +170,45 @@ class Ur3eVlaDataset(tfds.core.GeneratorBasedBuilder):
                     yield example_key, self._parse_demo(h5_path, demo_name, demo)
 
     def _parse_demo(self, h5_path: Path, demo_name: str, demo) -> dict:
-        image = np.asarray(demo["image"], dtype=np.uint8)
-        hand_image = np.asarray(demo["other"]["hand_image"], dtype=np.uint8)
-        robot_state = np.asarray(demo["robot_state"], dtype=np.float32)
-        action = np.asarray(demo["action"], dtype=np.float32)
-        task = self._decode_task(demo["task"][()])
-
-        if len(action) == 0:
+        # Check stored types before reading: casting here can hide corrupt
+        # images or turn an invalid source into apparently valid training data.
+        action_shape = getattr(demo["action"], "shape", ())
+        if action_shape is None or len(action_shape) != 2 or action_shape[1] != 8:
+            raise ValueError(f"{demo.name}/action: expected shape (T, 8)")
+        num_steps = action_shape[0]
+        if num_steps == 0:
             raise ValueError(f"Empty episode in {demo.name}")
-        if not (len(image) == len(hand_image) == len(robot_state) == len(action)):
-            raise ValueError(f"Inconsistent step lengths in {demo.name}")
+
+        action = self._read_demo_array(demo, "action", (num_steps, 8), np.float32)
+        robot_state = self._read_demo_array(demo, "robot_state", (num_steps, 15), np.float32)
+        if not np.allclose(np.linalg.norm(robot_state[:, 9:13], axis=1), 1, atol=1e-3):
+            raise ValueError(f"{demo.name}: invalid EE quaternion")
+        if not np.isin(robot_state[:, 13], [0, 1]).all():
+            raise ValueError(f"{demo.name}: state gripper must be logical binary")
+        if not np.all(robot_state[:, 14] == 0):
+            raise ValueError(f"{demo.name}: reserved state column must be zero")
+        if not np.isin(action[:, 6], [0, 1]).all():
+            raise ValueError(f"{demo.name}: action gripper must be logical binary")
+        if not (np.all(action[:-1, 7] == 0) and action[-1, 7] == 1):
+            raise ValueError(f"{demo.name}: terminal flag must occur only at final step")
+        if not np.all(action[-1, :6] == 0):
+            raise ValueError(f"{demo.name}: final motion action must be zero")
+
+        image_shape = (num_steps, 480, 640, 3)
+        image = self._read_demo_array(demo, "image", image_shape, np.uint8)
+        hand_image = self._read_demo_array(demo, "other/hand_image", image_shape, np.uint8)
+        for name, frames in (("image", image), ("other/hand_image", hand_image)):
+            if not np.any(frames, axis=(1, 2, 3)).all():
+                raise ValueError(f"{demo.name}/{name}: contains an all-black frame")
+        task_data = demo["task"]
+        if getattr(task_data, "shape", None) != ():
+            raise ValueError(f"{demo.name}: task must be scalar text")
+        task_value = task_data[()]
+        if not isinstance(task_value, (str, bytes)):
+            raise ValueError(f"{demo.name}: task must contain text")
+        task = self._decode_task(task_value)
+        if not task.strip() or "\x00" in task:
+            raise ValueError(f"{demo.name}: task must be nonempty text without NULL")
 
         language_embedding = self._embed([task])[0].numpy().astype(np.float32)
         last_idx = len(action) - 1
@@ -211,6 +241,19 @@ class Ur3eVlaDataset(tfds.core.GeneratorBasedBuilder):
                 "demo_id": demo_name,
             },
         }
+
+    @staticmethod
+    def _read_demo_array(demo, name: str, shape: tuple[int, ...], dtype) -> np.ndarray:
+        """Validate one exported array without mutating or coercing its source."""
+        dataset = demo[name]
+        if getattr(dataset, "shape", None) != shape:
+            raise ValueError(f"{demo.name}/{name}: expected shape {shape}")
+        if dataset.dtype != np.dtype(dtype):
+            raise ValueError(f"{demo.name}/{name}: expected {np.dtype(dtype)}, got {dataset.dtype}")
+        values = np.asarray(dataset)
+        if np.issubdtype(values.dtype, np.floating) and not np.isfinite(values).all():
+            raise ValueError(f"{demo.name}/{name}: contains non-finite values")
+        return values
 
     def _resolve_h5_paths(self) -> list[Path]:
         env_paths = os.environ.get("UR3E_VLA_H5_PATHS")

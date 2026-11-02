@@ -142,7 +142,7 @@ unset UR3E_VLA_H5_PATH
 export UR3E_VLA_H5_PATHS="$PROJECT_ROOT/outputs/h5/pick_place_v1/spoon/demos.h5,$PROJECT_ROOT/outputs/h5/pick_place_v1/red_mug/demos.h5,$PROJECT_ROOT/outputs/h5/pick_place_v1/bowl/demos.h5"
 ```
 
-The builder writes `ur3e_vla_dataset/1.1.0` beneath `--data_dir`.
+The builder writes `ur3e_vla_dataset/1.1.1` beneath `--data_dir`.
 See the [builder README](../rlds_builder/ur3e_vla_dataset/README.md) for source
 keys, split rules, filtering and migration. Moving H5 input paths changes
 episode keys; preserve each training run's original input list.
@@ -192,7 +192,7 @@ tfds build --data_dir "$SHARED/datasets/tfds/pick_place_v1"
 
 For multiple objects, set `UR3E_VLA_H5_PATHS` to a comma-separated list of
 their H5 files and unset `UR3E_VLA_H5_PATH`. TFDS adds its own
-`ur3e_vla_dataset/1.1.0` subdirectory beneath `--data_dir`. This builder rejects
+`ur3e_vla_dataset/1.1.1` subdirectory beneath `--data_dir`. This builder rejects
 mixed scene profiles and gripper encodings, filters failed episodes before
 splitting, and distinguishes source runs in episode keys. Keep historical
 `1.0.0` exports separate; see the builder README for split and migration details.

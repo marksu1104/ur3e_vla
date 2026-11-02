@@ -31,10 +31,20 @@ export UR3E_VLA_VAL_RATIO=0.1
 export UR3E_VLA_SPLIT_SEED=42
 ```
 
-The current builder is **1.1.0**. Its output is
-`<data_dir>/ur3e_vla_dataset/1.1.0/`; existing `1.0.0` exports remain historical
-artifacts and do not gain these checks. Rebuild from the selected H5 inputs and
-point training at the new export. Keep old exports separate when comparing runs.
+The current builder is **1.1.1**. Its output is
+`<data_dir>/ur3e_vla_dataset/1.1.1/`; existing `1.0.0` and `1.1.0` exports remain
+historical artifacts and do not gain these checks. The schema is unchanged from
+1.1.0, but the new build rejects invalid stored arrays before embedding: wrong
+uint8/float32 types or shapes, non-finite state/actions, non-unit EE quaternions,
+nonbinary grippers, invalid reserved/terminal fields, nonzero final motion,
+all-black main/wrist frames, and invalid task text. It never casts invalid input
+to make it fit. Rebuild from the selected H5 inputs and point training at the
+new export; do not treat a cached 1.1.0 build as newly validated.
+
+Keep `validate_h5.py` as the full source-data check: the parser validates fields
+used by TFDS, while the validator additionally checks H5 metadata and MultiView
+extra camera/pose/tip streams. Image checks do not establish visual quality. No
+new TensorFlow serialization or training run is implied by CPU parser tests.
 
 Each build accepts one scene profile: `canonical_scene_v1` or
 `multiview_scene_v1`. Files from those two profiles cannot be combined in one
@@ -57,3 +67,8 @@ builder reserves at least one episode for each of `train` and `val`. A single
 successful episode stays in `train` without a `val` split. Setting the ratio to
 `0.0` places all successful episodes in the TFDS `train` split. The external
 OpenVLA loader may choose its own validation fallback when no `val` split exists.
+
+For the 2026-11-03 offline check, `rlds_env` was present but the previously
+used USE cache was unavailable. No model was downloaded and no new TFDS
+serialization build was performed. Provision the required USE model/cache
+before a full build; parser tests and read-only H5 checks are separate evidence.
